@@ -1,8 +1,8 @@
-# Poojapa Store - Node.js & MySQL Backend API
+# Poojapa Store - Flutter App & Backend API
 
-A complete, production-ready REST API for selling **Poojapa / Spiritual & Vedic Items** (Agarbatti, Pure Bhimseni Kapur, Brass Akhand Diyas, Sacred Idols, Rudraksha Malas, Daily Pooja Kits, and Hawan Samagri).
+The Flutter storefront and admin app use the backend API for accounts, categories, products, orders, and dashboard data. The backend supports Supabase PostgreSQL or local MySQL.
 
-Built with **Node.js**, **Express**, and **MySQL** supporting **2 User Roles: Customer & Admin**.
+Built with **Flutter**, **Node.js**, and **Express**, with customer and admin roles.
 
 ---
 
@@ -12,7 +12,7 @@ Built with **Node.js**, **Express**, and **MySQL** supporting **2 User Roles: Cu
 backend/
 ├── src/
 │   ├── config/
-│   │   └── db.js              # MySQL connection pool with auto-reconnect & table migrations
+│   │   └── db.js              # Supabase PostgreSQL and MySQL adapters with schema setup
 │   ├── middleware/
 │   │   └── auth.js            # Role-based JWT authentication (Customer vs Admin)
 │   ├── controllers/
@@ -27,8 +27,6 @@ backend/
 │   │   ├── productRoutes.js
 │   │   ├── orderRoutes.js
 │   │   └── adminRoutes.js
-│   ├── scripts/
-│   │   └── seed.js            # Database auto-migration & authentic seed catalog
 │   └── server.js              # Express server entry point with health check
 ├── package.json
 └── .env                       # Database credentials & JWT secret
@@ -36,45 +34,15 @@ backend/
 
 ---
 
-## 👥 Two User Roles
+## Database
 
-| Role | Default Email | Default Password | Key Capabilities |
-| :--- | :--- | :--- | :--- |
-| **Store Admin** | `admin@poojapa.com` | `admin123` | • Business Analytics Dashboard (Revenue ₹, Total Orders, Customer Count)<br>• Inventory Management (Add, Edit, Delete, Low Stock Alerts)<br>• Order Fulfillment (Update status: Pending ➔ Confirmed ➔ Processing ➔ Shipped ➔ Delivered) |
-| **Customer** | `customer@poojapa.com` | `user123` | • Browse sacred poojapa collection by categories & keyword search<br>• Product detail views with Vedic significance & stock status<br>• Place orders with delivery details & payment method (COD, UPI/QR, Cards)<br>• Live order history & tracking |
+Set `DB_TYPE=supabase` and provide `DATABASE_URL` for Supabase PostgreSQL, or set `DB_TYPE=mysql` to use a local MySQL database. The backend initializes the required schema at startup; it does not create demo users, products, or orders.
 
----
+## Run the Backend
 
-## 🗄️ MySQL Database Schema
-
-The database `poojapa_db` includes the following relational tables:
-
-1. **`users`**: `id`, `name`, `email`, `password` (bcrypt), `phone`, `role` (`'customer'`, `'admin'`), `address`, timestamps.
-2. **`categories`**: `id`, `name`, `slug`, `description`, `image_url`, `icon_name`, `is_active`.
-3. **`products`**: `id`, `category_id` (FK), `name`, `description`, `price`, `discount_price`, `stock_quantity`, `unit`, `image_url`, `is_featured`, `is_active`.
-4. **`orders`**: `id`, `order_number`, `user_id` (FK), `total_amount`, `delivery_fee`, `final_amount`, `payment_method`, `payment_status`, `order_status`, shipping address fields.
-5. **`order_items`**: `id`, `order_id` (FK), `product_id` (FK), `product_name`, `price`, `quantity`, `total_price`, `image_url`.
-
----
-
-## 🚀 How to Run the Backend
-
-### 1. Start MySQL Database
-Ensure MySQL is running (e.g. via **XAMPP Control Panel**, **WampServer**, or native Windows MySQL service on port `3306`).
-In `backend/.env`:
-```env
-DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=
-DB_NAME=poojapa_db
-DB_PORT=3306
-```
-
-### 2. Install & Start Server
 ```bash
 cd backend
 npm install
-npm run seed      # Creates database, tables, and authentic pooja items
 npm run dev       # Starts server on http://localhost:5000
 ```
 
@@ -83,7 +51,7 @@ npm run dev       # Starts server on http://localhost:5000
 ## 📡 REST API Reference
 
 ### Authentication
-- `POST /api/auth/register` - Register customer or admin
+- `POST /api/auth/register` - Register a customer account
 - `POST /api/auth/login` - Authenticate & receive JWT token
 - `GET /api/auth/me` - Get current user profile
 

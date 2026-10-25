@@ -95,7 +95,7 @@ async function createOrder(req, res) {
       deliveryFee,
       finalAmount,
       payment_method,
-      payment_method === 'Cash on Delivery' ? 'pending' : 'paid',
+      'pending',
       'pending',
       shipping_name.trim(),
       shipping_phone.trim(),
@@ -117,20 +117,19 @@ async function createOrder(req, res) {
     }
 
     await conn.commit();
+    const [createdOrders] = await conn.query(
+      'SELECT * FROM orders WHERE id = ? LIMIT 1',
+      [orderId]
+    );
+    const [createdItems] = await conn.query(
+      'SELECT * FROM order_items WHERE order_id = ?',
+      [orderId]
+    );
 
     return res.status(201).json({
       success: true,
       message: 'Auspicious pooja order placed successfully!',
-      order: {
-        id: orderId,
-        order_number: orderNumber,
-        final_amount: finalAmount,
-        total_amount: totalAmount,
-        delivery_fee: deliveryFee,
-        order_status: 'pending',
-        payment_method,
-        item_count: orderItemsToInsert.length,
-      },
+      order: { ...createdOrders[0], items: createdItems },
     });
   } catch (err) {
     await conn.rollback();

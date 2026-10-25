@@ -7,7 +7,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 async function register(req, res) {
   try {
-    const { name, email, password, phone, address, role } = req.body;
+    const { name, email, password, phone, address } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -16,8 +16,7 @@ async function register(req, res) {
       });
     }
 
-    // Role check: Only allow 'admin' or 'customer'. Defaults to 'customer'
-    const assignedRole = (role === 'admin') ? 'admin' : 'customer';
+    const assignedRole = 'customer';
 
     const pool = getPool();
     const [existing] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email.trim().toLowerCase()]);
