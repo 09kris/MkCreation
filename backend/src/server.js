@@ -49,7 +49,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Mount Routes
-app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
@@ -60,12 +60,12 @@ app.get('/', (req, res) => {
   res.json({
     message: 'Welcome to Poojapa Store Backend API',
     endpoints: {
-      health: '/api/health',
-      auth: '/api/auth',
-      categories: '/api/categories',
-      products: '/api/products',
-      orders: '/api/orders',
-      admin: '/api/admin',
+      health: '/health',
+      auth: '/auth',
+      categories: '/categories',
+      products: '/products',
+      orders: '/orders',
+      admin: '/admin',
     },
   });
 });
