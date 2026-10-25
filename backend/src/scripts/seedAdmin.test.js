@@ -73,5 +73,8 @@ test('does not overwrite an existing non-admin account', async () => {
 });
 
 test('requires admin credentials', async () => {
-  await assert.rejects(seedAdmin({ pool: { query: async () => [[], []] } }), /ADMIN_NAME, ADMIN_EMAIL, and ADMIN_PASSWORD/);
+  await assert.rejects(
+    seedAdmin({ pool: { query: async () => [[], []] } }),
+    /Set ADMIN_NAME, ADMIN_EMAIL, and ADMIN_PASSWORD in backend\/.env/
+  );
 });

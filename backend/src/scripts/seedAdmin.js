@@ -11,7 +11,9 @@ async function seedAdmin({
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
   if (!normalizedName || !normalizedEmail || typeof password !== 'string' || !password) {
-    throw new Error('ADMIN_NAME, ADMIN_EMAIL, and ADMIN_PASSWORD must be set to create the admin account.');
+    throw new Error(
+      'Set ADMIN_NAME, ADMIN_EMAIL, and ADMIN_PASSWORD in backend/.env or the process environment to create the admin account.'
+    );
   }
 
   const [existingUsers] = await pool.query(
