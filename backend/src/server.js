@@ -30,19 +30,25 @@ app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Health Check Endpoint
 app.get('/api/health', async (req, res) => {
-  let dbStatus = 'disconnected';
   try {
     const pool = getPool();
     await pool.query('SELECT 1');
-    dbStatus = 'connected';
+    console.log('[Health Check] Database connection successful.');
   } catch (e) {
-    dbStatus = `error: ${e.message}`;
+    console.error('[Health Check] Database connection failed:', e.message);
+    return res.status(503).json({
+      status: 'degraded',
+      appName: 'Poojapa Spiritual Store API',
+      database: 'disconnected',
+      timestamp: new Date().toISOString(),
+      roles: ['customer', 'admin'],
+    });
   }
 
   res.json({
     status: 'online',
     appName: 'Poojapa Spiritual Store API',
-    database: dbStatus,
+    database: 'connected',
     timestamp: new Date().toISOString(),
     roles: ['customer', 'admin'],
   });
@@ -89,22 +95,19 @@ app.use((err, req, res, next) => {
 
 // Start Server and Initialize Database
 async function startServer() {
+  console.log(`[Server] Initializing ${process.env.DB_TYPE || 'mysql'} database...`);
   try {
-    console.log(`[Server] Initializing ${process.env.DB_TYPE || 'mysql'} database...`);
     await initDatabase();
     console.log('[Server] Database initialized successfully.');
   } catch (err) {
-    console.warn('------------------------------------------------------------');
-    console.warn('[Server Warning] Could not initialize the configured database:');
-    console.warn(`  ${err.message}`);
+    console.error('[Server] Database initialization failed:', err.message);
     if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'supabase') {
-      console.warn('  Verify DATABASE_URL and that the Supabase database is reachable.');
+      console.error('[Server] Verify DB_TYPE=supabase, DATABASE_URL in the Render environment, and Supabase network access.');
     } else {
-      console.warn('  Ensure MySQL server is running (e.g. via XAMPP, WAMP, or the MySQL service).');
-      console.warn('  Database host: ' + (process.env.DB_HOST || 'localhost') + ':' + (process.env.DB_PORT || '3306'));
+      console.error('[Server] Verify the MySQL service and DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD.');
     }
-    console.warn('  The server will continue running and retry upon incoming requests.');
-    console.warn('------------------------------------------------------------');
+    process.exitCode = 1;
+    return;
   }
 
   app.listen(PORT, '0.0.0.0', () => {
