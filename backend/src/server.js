@@ -90,15 +90,19 @@ app.use((err, req, res, next) => {
 // Start Server and Initialize Database
 async function startServer() {
   try {
-    console.log('[Server] Initializing MySQL Database...');
+    console.log(`[Server] Initializing ${process.env.DB_TYPE || 'mysql'} database...`);
     await initDatabase();
     console.log('[Server] Database initialized successfully.');
   } catch (err) {
     console.warn('------------------------------------------------------------');
-    console.warn('[Server Warning] Could not connect to MySQL Database:');
+    console.warn('[Server Warning] Could not initialize the configured database:');
     console.warn(`  ${err.message}`);
-    console.warn('  Ensure MySQL server is running (e.g. via XAMPP, MySQL Service)');
-    console.warn('  Database host: ' + (process.env.DB_HOST || 'localhost') + ':' + (process.env.DB_PORT || '3306'));
+    if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'supabase') {
+      console.warn('  Verify DATABASE_URL and that the Supabase database is reachable.');
+    } else {
+      console.warn('  Ensure MySQL server is running (e.g. via XAMPP, WAMP, or the MySQL service).');
+      console.warn('  Database host: ' + (process.env.DB_HOST || 'localhost') + ':' + (process.env.DB_PORT || '3306'));
+    }
     console.warn('  The server will continue running and retry upon incoming requests.');
     console.warn('------------------------------------------------------------');
   }

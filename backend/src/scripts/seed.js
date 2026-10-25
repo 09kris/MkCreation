@@ -31,9 +31,9 @@ async function seedData() {
       customerId = customerResult.insertId;
       console.log('[Seed] Created default Admin (admin@poojapa.com / admin123) and Customer (customer@poojapa.com / user123).');
     } else {
-      const [adminRow] = await conn.query('SELECT id FROM users WHERE role = "admin" LIMIT 1');
+      const [adminRow] = await conn.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
       if (adminRow.length > 0) adminId = adminRow[0].id;
-      const [custRow] = await conn.query('SELECT id FROM users WHERE role = "customer" LIMIT 1');
+      const [custRow] = await conn.query("SELECT id FROM users WHERE role = 'customer' LIMIT 1");
       if (custRow.length > 0) customerId = custRow[0].id;
     }
 
