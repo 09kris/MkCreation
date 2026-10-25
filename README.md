@@ -38,6 +38,8 @@ backend/
 
 Set `DB_TYPE=supabase` and provide `DATABASE_URL` for Supabase PostgreSQL, or set `DB_TYPE=mysql` to use a local MySQL database. The backend initializes the required schema at startup; it does not create demo users, products, or orders.
 
+To create the initial admin account, configure `ADMIN_NAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in the backend environment, then run `npm run seed:admin` from the `backend` directory. The seeder hashes the password and skips creation if that email already belongs to an admin. It does not change existing account credentials.
+
 ## Run the Backend
 
 ```bash
