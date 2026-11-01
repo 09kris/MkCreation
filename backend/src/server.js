@@ -1,9 +1,13 @@
+
+
+
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const path = require('path');
-const { initDatabase, getPool } = require('./config/db');
 
+const { initDatabase, getPool } = require('./config/db');
 // Route imports
 const authRoutes = require('./routes/authRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
@@ -11,7 +15,6 @@ const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -95,29 +98,28 @@ app.use((err, req, res, next) => {
 
 // Start Server and Initialize Database
 async function startServer() {
-  console.log(`[Server] Initializing ${process.env.DB_TYPE || 'mysql'} database...`);
-  try {
-    await initDatabase();
-    console.log('[Server] Database initialized successfully.');
-  } catch (err) {
-    console.error('[Server] Database initialization failed:', err.message);
-    if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'supabase') {
-      console.error('[Server] Verify DB_TYPE=supabase, DATABASE_URL in the Render environment, and Supabase network access.');
-    } else {
-      console.error('[Server] Verify the MySQL service and DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD.');
-    }
-    process.exitCode = 1;
-    return;
-  }
+    console.log('[Server] Initializing Supabase PostgreSQL database...');
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`====================================================`);
-    console.log(` Poojapa Store API Server running on port ${PORT}`);
-    console.log(` Local:            http://localhost:${PORT}`);
-    console.log(` Health Check:     http://localhost:${PORT}/api/health`);
-    console.log(` Customer & Admin Roles: Ready`);
-    console.log(`====================================================`);
-  });
+    try {
+        if (!process.env.DATABASE_URL) {
+            throw new Error('DATABASE_URL is missing from .env');
+        }
+
+        await initDatabase();
+
+        console.log('[Server] Supabase database initialized successfully.');
+
+        const PORT = process.env.PORT || 5000;
+
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`[Server] Running on port ${PORT}`);
+        });
+
+      } catch (error) {
+          console.error('[Server] Database initialization failed:', error);
+          process.exit(1);
+      }
 }
+
 
 startServer();

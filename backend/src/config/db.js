@@ -316,16 +316,9 @@ async function createMySqlTables() {
     conn.release();
   }
 }
-
 async function initDatabase() {
-  const provider = (process.env.DB_TYPE || 'mysql').toLowerCase();
-  if (provider === 'supabase') {
-    return initSupabaseDatabase();
-  }
-  if (provider === 'mysql') {
-    return initMySqlDatabase();
-  }
-  throw new Error(`Unsupported DB_TYPE "${provider}". Use "supabase" or "mysql".`);
+    console.log('[DB] Initializing Supabase PostgreSQL...');
+    return await initSupabaseDatabase();
 }
 
 function getPool() {
