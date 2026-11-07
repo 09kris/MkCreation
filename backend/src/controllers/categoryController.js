@@ -34,7 +34,10 @@ async function getCategoryById(req, res) {
   try {
     const { id } = req.params;
     const pool = getPool();
-    const [rows] = await pool.query('SELECT * FROM categories WHERE id = ? OR slug = ? LIMIT 1', [id, id]);
+    const isNumericId = /^\d+$/.test(id);
+    const [rows] = isNumericId
+      ? await pool.query('SELECT * FROM categories WHERE id = ? OR slug = ? LIMIT 1', [parseInt(id, 10), id])
+      : await pool.query('SELECT * FROM categories WHERE slug = ? LIMIT 1', [id]);
 
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Category not found.' });

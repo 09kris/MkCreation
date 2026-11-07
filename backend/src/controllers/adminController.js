@@ -53,11 +53,11 @@ async function getDashboardStats(req, res) {
     return res.json({
       success: true,
       stats: {
-        total_revenue: parseFloat(salesResult[0].total_revenue) || 0,
-        total_orders: salesResult[0].total_orders || 0,
-        total_customers: customerResult[0].total_customers || 0,
-        total_products: productResult[0].total_products || 0,
-        low_stock_count: productResult[0].low_stock_count || 0,
+        total_revenue: parseFloat(salesResult[0]?.total_revenue) || 0,
+        total_orders: parseInt(salesResult[0]?.total_orders, 10) || 0,
+        total_customers: parseInt(customerResult[0]?.total_customers, 10) || 0,
+        total_products: parseInt(productResult[0]?.total_products, 10) || 0,
+        low_stock_count: parseInt(productResult[0]?.low_stock_count, 10) || 0,
         status_breakdown: statusBreakdown,
         low_stock_products: lowStockProducts,
         recent_orders: recentOrders,

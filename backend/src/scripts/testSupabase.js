@@ -1,7 +1,8 @@
 const { initDatabase, getPool } = require('../config/db');
 
 async function testSupabaseConnection() {
-  if ((process.env.DB_TYPE || '').toLowerCase() !== 'supabase') {
+  const dbType = (process.env.DB_TYPE || (process.env.DATABASE_URL ? 'supabase' : '')).toLowerCase();
+  if (dbType !== 'supabase') {
     throw new Error('Set DB_TYPE=supabase in the backend environment before running this check.');
   }
 

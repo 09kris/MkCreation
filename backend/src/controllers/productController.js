@@ -32,7 +32,7 @@ async function getAllProducts(req, res) {
     // Filter by category
     if (category_id) {
       query += ' AND p.category_id = ?';
-      params.push(category_id);
+      params.push(parseInt(category_id, 10));
     }
 
     // Filter by search keyword
@@ -215,6 +215,11 @@ async function updateProduct(req, res) {
 
     const pool = getPool();
 
+    const shouldUpdateDiscount = discount_price !== undefined;
+    const parsedDiscount = shouldUpdateDiscount && discount_price !== null && discount_price !== ''
+      ? parseFloat(discount_price)
+      : null;
+
     await pool.query(`
       UPDATE products 
       SET 
@@ -222,7 +227,7 @@ async function updateProduct(req, res) {
         name = COALESCE(?, name),
         description = COALESCE(?, description),
         price = COALESCE(?, price),
-        discount_price = ?,
+        discount_price = CASE WHEN ? THEN ? ELSE discount_price END,
         stock_quantity = COALESCE(?, stock_quantity),
         unit = COALESCE(?, unit),
         image_url = COALESCE(?, image_url),
@@ -234,7 +239,8 @@ async function updateProduct(req, res) {
       name ? name.trim() : null,
       description !== undefined ? description : null,
       price !== undefined ? parseFloat(price) : null,
-      discount_price !== undefined ? (discount_price ? parseFloat(discount_price) : null) : null,
+      shouldUpdateDiscount,
+      parsedDiscount,
       stock_quantity !== undefined ? parseInt(stock_quantity, 10) : null,
       unit || null,
       image_url !== undefined ? image_url : null,

@@ -178,7 +178,10 @@ async function getOrderById(req, res) {
     const { id } = req.params;
     const pool = getPool();
 
-    const [orders] = await pool.query('SELECT * FROM orders WHERE id = ? OR order_number = ? LIMIT 1', [id, id]);
+    const isNumericId = /^\d+$/.test(id);
+    const [orders] = isNumericId
+      ? await pool.query('SELECT * FROM orders WHERE id = ? OR order_number = ? LIMIT 1', [parseInt(id, 10), id])
+      : await pool.query('SELECT * FROM orders WHERE order_number = ? LIMIT 1', [id]);
     if (orders.length === 0) {
       return res.status(404).json({ success: false, message: 'Order not found.' });
     }

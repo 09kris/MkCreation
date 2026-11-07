@@ -6,10 +6,12 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // Customer routes (authenticated)
 router.post('/', authenticateToken, orderController.createOrder);
 router.get('/my-orders', authenticateToken, orderController.getMyOrders);
-router.get('/:id', authenticateToken, orderController.getOrderById);
 
-// Admin-only order routes
+// Admin-only order routes (registered before /:id)
 router.get('/admin/all', authenticateToken, requireAdmin, orderController.getAllOrdersAdmin);
 router.put('/admin/:id/status', authenticateToken, requireAdmin, orderController.updateOrderStatusAdmin);
+
+// Specific order detail route
+router.get('/:id', authenticateToken, orderController.getOrderById);
 
 module.exports = router;
