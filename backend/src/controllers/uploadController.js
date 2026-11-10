@@ -119,6 +119,13 @@ function getUploadedFiles(req) {
 
 async function uploadImages(req, res) {
   const files = getUploadedFiles(req);
+  console.log('[Cloudinary Config]', {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim(),
+    apiKeyPresent: !!process.env.CLOUDINARY_API_KEY?.trim(),
+    apiSecretPresent: !!process.env.CLOUDINARY_API_SECRET?.trim(),
+    apiSecretLength: process.env.CLOUDINARY_API_SECRET?.trim().length,
+    folder: process.env.CLOUDINARY_FOLDER || 'mkcreation'
+});
   if (!files.length) {
     return res.status(400).json({ success: false, message: 'Please select at least one image to upload.' });
   }
