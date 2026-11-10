@@ -20,15 +20,21 @@ function parseBoolean(value, fallback = false) {
   return value === true || value === 1 || ['true', '1', 'on'].includes(String(value).toLowerCase());
 }
 
-async function categoryIsActive(pool, categoryId) {
+async function categoryIsActive(pool, categoryId, subcategoryId = null) {
   const [categories] = await pool.query(`
-    SELECT c.id
-    FROM categories c
-    LEFT JOIN categories parent ON parent.id = c.parent_category_id
-    WHERE c.id = ? AND c.is_active = 1
-      AND (parent.id IS NULL OR parent.is_active = 1)
+    SELECT id
+    FROM categories
+    WHERE id = ? AND is_active = 1
   `, [categoryId]);
-  return categories.length > 0;
+  if (!categories.length) return false;
+  if (subcategoryId == null) return true;
+
+  const [subcategories] = await pool.query(`
+    SELECT id
+    FROM subcategories
+    WHERE id = ? AND category_id = ? AND is_active = 1
+  `, [subcategoryId, categoryId]);
+  return subcategories.length > 0;
 }
 
 async function resolveImageUrls(req, existingUrls = []) {
@@ -46,39 +52,36 @@ async function resolveImageUrls(req, existingUrls = []) {
 
 async function getAllProducts(req, res) {
   try {
-    const { category_id, search, featured, sort, limit = 100, page = 1 } = req.query;
+    const { category_id, subcategory_id, search, featured, sort, limit = 100, page = 1 } = req.query;
     const pool = getPool();
 
     let query = `
-      SELECT p.id, p.category_id,
-        CASE WHEN parent.id IS NULL THEN c.name
-          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
-        c.slug AS category_slug,
-        c.parent_category_id, parent.name AS parent_category_name,
+      SELECT p.id, p.category_id, p.subcategory_id,
+        CASE WHEN s.id IS NULL THEN c.name
+          ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
+        c.name AS category_root_name, s.name AS subcategory_name,
+        c.slug AS category_slug
         p.name, p.description, p.price, p.discount_price, p.stock_quantity, p.unit,
         p.image_url, p.image_urls, p.is_featured, p.is_active, p.created_at, p.updated_at
       FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      JOIN categories c ON c.id = p.category_id
+      LEFT JOIN subcategories s ON s.id = p.subcategory_id
       WHERE 1=1
     `;
     const params = [];
 
     if (category_id) {
-      query += ` AND (
-        p.category_id = ?
-        OR EXISTS (
-          SELECT 1 FROM categories subcategory
-          WHERE subcategory.id = p.category_id
-            AND subcategory.parent_category_id = ?
-        )
-      )`;
-      params.push(parseInt(category_id, 10), parseInt(category_id, 10));
+      query += ' AND p.category_id = ?';
+      params.push(parseInt(category_id, 10));
+    }
+    if (subcategory_id) {
+      query += ' AND p.subcategory_id = ?';
+      params.push(parseInt(subcategory_id, 10));
     }
     if (search?.trim()) { query += ' AND (p.name LIKE ? OR p.description LIKE ?)'; params.push(`%${search.trim()}%`, `%${search.trim()}%`); }
     if (featured === 'true' || featured === '1') query += ' AND p.is_featured = 1';
     if (req.query.all !== 'true') {
-      query += ' AND p.is_active = 1 AND c.is_active = 1 AND (parent.id IS NULL OR parent.is_active = 1)';
+      query += ' AND p.is_active = 1 AND c.is_active = 1 AND (s.id IS NULL OR s.is_active = 1)';
     }
 
     if (sort === 'price_asc') query += ' ORDER BY COALESCE(p.discount_price, p.price) ASC';
@@ -104,14 +107,14 @@ async function getFeaturedProducts(req, res) {
     const pool = getPool();
     const [products] = await pool.query(`
       SELECT p.*,
-        CASE WHEN parent.id IS NULL THEN c.name
-          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
-        c.parent_category_id, parent.name AS parent_category_name
+        CASE WHEN s.id IS NULL THEN c.name
+          ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
+        c.name AS category_root_name, s.name AS subcategory_name
       FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      JOIN categories c ON c.id = p.category_id
+      LEFT JOIN subcategories s ON s.id = p.subcategory_id
       WHERE p.is_featured = 1 AND p.is_active = 1 AND c.is_active = 1
-        AND (parent.id IS NULL OR parent.is_active = 1)
+        AND (s.id IS NULL OR s.is_active = 1)
       ORDER BY p.id DESC LIMIT 10
     `);
     return res.json({ success: true, products: products.map(withProductImages) });
@@ -126,15 +129,15 @@ async function getProductById(req, res) {
     const pool = getPool();
     const [products] = await pool.query(`
       SELECT p.*,
-        CASE WHEN parent.id IS NULL THEN c.name
-          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
-        c.slug AS category_slug,
-        c.parent_category_id, parent.name AS parent_category_name
+        CASE WHEN s.id IS NULL THEN c.name
+          ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
+        c.name AS category_root_name, s.name AS subcategory_name,
+        c.slug AS category_slug
       FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      JOIN categories c ON c.id = p.category_id
+      LEFT JOIN subcategories s ON s.id = p.subcategory_id
       WHERE p.id = ? AND p.is_active = 1 AND c.is_active = 1
-        AND (parent.id IS NULL OR parent.is_active = 1)
+        AND (s.id IS NULL OR s.is_active = 1)
       LIMIT 1
     `, [req.params.id]);
 
@@ -148,9 +151,10 @@ async function getProductById(req, res) {
 
 async function createProduct(req, res) {
   try {
-    const { category_id, name, description, price, discount_price, stock_quantity, unit, is_featured, is_active } = req.body;
+    const { category_id, subcategory_id, name, description, price, discount_price, stock_quantity, unit, is_featured, is_active } = req.body;
     const productName = typeof name === 'string' ? name.trim() : '';
     const categoryId = Number(category_id);
+    const subcategoryId = subcategory_id == null || subcategory_id === '' ? null : Number(subcategory_id);
     const productPrice = Number(price);
     const discountPrice = discount_price === undefined || discount_price === null || discount_price === ''
       ? null
@@ -160,6 +164,7 @@ async function createProduct(req, res) {
 
     if (!productName || productName.length > 200 ||
       !Number.isInteger(categoryId) || categoryId < 1 ||
+      (subcategoryId !== null && (!Number.isInteger(subcategoryId) || subcategoryId < 1)) ||
       !Number.isFinite(productPrice) || productPrice <= 0 || productPrice > 99999999.99 ||
       (discountPrice !== null && (!Number.isFinite(discountPrice) || discountPrice < 0 || discountPrice >= productPrice)) ||
       !Number.isSafeInteger(stockQuantity) || stockQuantity < 0 || stockQuantity > 2147483647 ||
@@ -171,20 +176,21 @@ async function createProduct(req, res) {
     }
 
     const pool = getPool();
-    if (!await categoryIsActive(pool, categoryId)) {
+    if (!await categoryIsActive(pool, categoryId, subcategoryId)) {
       return res.status(400).json({
         success: false,
-        message: 'Choose an active category or subcategory for this product.',
+        message: 'Choose an active category and a subcategory that belongs to it.',
       });
     }
 
     const imageUrls = await resolveImageUrls(req);
     const primaryImageUrl = imageUrls[0] || null;
     const [result] = await pool.query(`
-      INSERT INTO products (category_id, name, description, price, discount_price, stock_quantity, unit, image_url, image_urls, is_featured, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (category_id, subcategory_id, name, description, price, discount_price, stock_quantity, unit, image_url, image_urls, is_featured, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       categoryId,
+      subcategoryId,
       productName,
       typeof description === 'string' && description.trim() ? description.trim() : null,
       productPrice,
@@ -199,12 +205,12 @@ async function createProduct(req, res) {
 
     const [newProduct] = await pool.query(`
       SELECT p.*,
-        CASE WHEN parent.id IS NULL THEN c.name
-          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
-        c.parent_category_id, parent.name AS parent_category_name
+        CASE WHEN s.id IS NULL THEN c.name
+          ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
+        c.name AS category_root_name, s.name AS subcategory_name
       FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      JOIN categories c ON c.id = p.category_id
+      LEFT JOIN subcategories s ON s.id = p.subcategory_id
       WHERE p.id = ?
     `, [result.insertId]);
 
@@ -220,16 +226,42 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { category_id, name, description, price, discount_price, stock_quantity, unit, is_featured, is_active } = req.body;
+    const {
+      category_id,
+      subcategory_id,
+      name,
+      description,
+      price,
+      discount_price,
+      stock_quantity,
+      unit,
+      is_featured,
+      is_active,
+    } = req.body;
 
     const pool = getPool();
-    const [existing] = await pool.query('SELECT image_url, image_urls FROM products WHERE id = ?', [id]);
+    const [existing] = await pool.query(
+      'SELECT category_id, subcategory_id, image_url, image_urls FROM products WHERE id = ?',
+      [id]
+    );
     if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found.' });
-    if (category_id !== undefined && category_id !== null &&
-        !await categoryIsActive(pool, Number(category_id))) {
+    const categoryChanged = category_id !== undefined && category_id !== null;
+    const subcategoryChanged = Object.hasOwn(req.body, 'subcategory_id');
+    const nextCategoryId = categoryChanged
+      ? Number(category_id)
+      : Number(existing[0].category_id);
+    const nextSubcategoryId = subcategoryChanged
+      ? subcategory_id == null || subcategory_id === '' ? null : Number(subcategory_id)
+      : categoryChanged ? null : existing[0].subcategory_id;
+    if ((categoryChanged || subcategoryChanged) &&
+        (!Number.isInteger(nextCategoryId) || nextCategoryId < 1 ||
+          (nextSubcategoryId !== null &&
+            (!Number.isInteger(Number(nextSubcategoryId)) ||
+              Number(nextSubcategoryId) < 1)) ||
+          !await categoryIsActive(pool, nextCategoryId, nextSubcategoryId))) {
       return res.status(400).json({
         success: false,
-        message: 'Choose an active category or subcategory for this product.',
+        message: 'Choose an active category and a subcategory that belongs to it.',
       });
     }
 
@@ -244,6 +276,7 @@ async function updateProduct(req, res) {
     await pool.query(`
       UPDATE products SET
         category_id    = COALESCE(?, category_id),
+        subcategory_id = CASE WHEN ? THEN ? ELSE subcategory_id END,
         name           = COALESCE(?, name),
         description    = COALESCE(?, description),
         price          = COALESCE(?, price),
@@ -256,7 +289,9 @@ async function updateProduct(req, res) {
         is_active      = COALESCE(?, is_active)
       WHERE id = ?
     `, [
-      category_id || null,
+      categoryChanged ? nextCategoryId : null,
+      categoryChanged || subcategoryChanged,
+      nextSubcategoryId,
       name ? name.trim() : null,
       description !== undefined ? description : null,
       price !== undefined ? parseFloat(price) : null,
@@ -272,12 +307,12 @@ async function updateProduct(req, res) {
 
     const [updated] = await pool.query(`
       SELECT p.*,
-        CASE WHEN parent.id IS NULL THEN c.name
-          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
-        c.parent_category_id, parent.name AS parent_category_name
+        CASE WHEN s.id IS NULL THEN c.name
+          ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
+        c.name AS category_root_name, s.name AS subcategory_name
       FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      JOIN categories c ON c.id = p.category_id
+      LEFT JOIN subcategories s ON s.id = p.subcategory_id
       WHERE p.id = ?
     `, [id]);
 

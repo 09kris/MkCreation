@@ -39,10 +39,17 @@ async function createOrder(req, res) {
            AND EXISTS (
              SELECT 1
              FROM categories
-             LEFT JOIN categories parent ON parent.id = categories.parent_category_id
              WHERE categories.id = products.category_id
                AND categories.is_active = 1
-               AND (parent.id IS NULL OR parent.is_active = 1)
+               AND (
+                 products.subcategory_id IS NULL
+                 OR EXISTS (
+                   SELECT 1 FROM subcategories
+                   WHERE subcategories.id = products.subcategory_id
+                     AND subcategories.category_id = categories.id
+                     AND subcategories.is_active = 1
+                 )
+               )
            )
          FOR UPDATE`,
         [item.product_id]

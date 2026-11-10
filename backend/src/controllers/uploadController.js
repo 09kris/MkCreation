@@ -1,5 +1,3 @@
-const crypto = require('node:crypto');
-const https = require('node:https');
 const cloudinary = require('cloudinary').v2;
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
@@ -31,76 +29,54 @@ function createCloudinarySignature(folder, timestamp, apiSecret) {
 }
 
 function assertCloudinaryConfigured() {
-  const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-  const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY?.trim();
-  const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET?.trim();
-  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+  const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
+  const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+  if (!cloudName || !apiKey || !apiSecret) {
     const err = new Error('Cloudinary is not configured on the server.');
     err.status = 503;
     throw err;
   }
+
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+  });
+
   return {
-    cloudName: CLOUDINARY_CLOUD_NAME,
-    apiKey: CLOUDINARY_API_KEY,
-    apiSecret: CLOUDINARY_API_SECRET,
-    folder: process.env.CLOUDINARY_FOLDER || 'mkcreation',
+    folder: process.env.CLOUDINARY_FOLDER?.trim() || 'mkcreation',
   };
 }
 
 function uploadToCloudinary(file) {
-  validateImageFile(file);
-  const { cloudName, apiKey, apiSecret, folder } = assertCloudinaryConfigured();
+    validateImageFile(file);
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  const signature = createCloudinarySignature(folder, timestamp, apiSecret);
-  const boundary = `----MkCreation${crypto.randomBytes(16).toString('hex')}`;
+    const { folder } = assertCloudinaryConfigured();
 
-  const fields = { api_key: apiKey, asset_folder: folder, timestamp, signature };
-  const parts = [];
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                resource_type: 'image',
+                asset_folder: folder,
+            },
+            (error, result) => {
+                if (error) {
+                    return reject(error);
+                }
 
-  for (const [name, value] of Object.entries(fields)) {
-    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
-  }
+                if (!result?.secure_url) {
+                    return reject(
+                        new Error('Cloudinary upload failed.')
+                    );
+                }
 
-  const safeFilename = file.originalname.replace(/["\r\n]/g, '');
-  parts.push(
-    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: ${file.mimetype}\r\n\r\n`),
-    file.buffer,
-    Buffer.from(`\r\n--${boundary}--\r\n`)
-  );
-  const body = Buffer.concat(parts);
+                resolve(result.secure_url);
+            }
+        );
 
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        method: 'POST',
-        hostname: 'api.cloudinary.com',
-        path: `/v1_1/${encodeURIComponent(cloudName)}/image/upload`,
-        headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          'Content-Length': body.length,
-        },
-        timeout: 30000,
-      },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          let result;
-          try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-          catch { return reject(new Error('Cloudinary returned an invalid response.')); }
-
-          if (res.statusCode < 200 || res.statusCode >= 300 || !result.secure_url) {
-            return reject(new Error(result.error?.message || 'Cloudinary could not store this image.'));
-          }
-          resolve(result.secure_url);
-        });
-      }
-    );
-    req.on('timeout', () => req.destroy(new Error('Cloudinary upload timed out.')));
-    req.on('error', reject);
-    req.end(body);
-  });
+        uploadStream.end(file.buffer);
+    });
 }
 
 async function uploadFilesToCloudinary(files) {

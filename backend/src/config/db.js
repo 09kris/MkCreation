@@ -79,16 +79,28 @@ async function createSupabaseTables(pgPool) {
       id SERIAL PRIMARY KEY,
       name VARCHAR(100) NOT NULL UNIQUE,
       slug VARCHAR(120) NOT NULL UNIQUE,
-      parent_category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
       description TEXT,
       image_url TEXT,
       icon_name VARCHAR(50) DEFAULT 'local_fire_department',
       is_active SMALLINT NOT NULL DEFAULT 1,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    `CREATE TABLE IF NOT EXISTS subcategories (
+      id SERIAL PRIMARY KEY,
+      category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+      name VARCHAR(100) NOT NULL,
+      slug VARCHAR(120) NOT NULL UNIQUE,
+      description TEXT,
+      image_url TEXT,
+      icon_name VARCHAR(50) DEFAULT 'local_fire_department',
+      is_active SMALLINT NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (category_id, name)
+    )`,
     `CREATE TABLE IF NOT EXISTS products (
       id SERIAL PRIMARY KEY,
       category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+      subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
       name VARCHAR(200) NOT NULL,
       description TEXT,
       price DECIMAL(10, 2) NOT NULL,
@@ -159,6 +171,35 @@ async function createSupabaseTables(pgPool) {
     'ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT'
   );
   await pgPool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_urls TEXT');
+  await pgPool.query(
+    'ALTER TABLE products ADD COLUMN IF NOT EXISTS subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL'
+  );
+  await pgPool.query(`
+    INSERT INTO subcategories
+      (category_id, name, slug, description, image_url, icon_name, is_active, created_at)
+    SELECT parent_category_id, name, slug, description, image_url, icon_name, is_active, created_at
+    FROM categories
+    WHERE parent_category_id IS NOT NULL
+    ON CONFLICT (slug) DO UPDATE SET
+      category_id = EXCLUDED.category_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      image_url = EXCLUDED.image_url,
+      icon_name = EXCLUDED.icon_name,
+      is_active = EXCLUDED.is_active
+  `);
+  await pgPool.query(`
+    UPDATE products p
+    SET category_id = s.category_id, subcategory_id = s.id
+    FROM categories legacy
+    JOIN subcategories s ON s.slug = legacy.slug
+    WHERE legacy.parent_category_id IS NOT NULL
+      AND p.category_id = legacy.id
+  `);
+  await pgPool.query('DELETE FROM categories WHERE parent_category_id IS NOT NULL');
+  await pgPool.query('ALTER TABLE categories DROP COLUMN IF EXISTS parent_category_id');
+  await pgPool.query('CREATE INDEX IF NOT EXISTS subcategories_category_id_idx ON subcategories(category_id)');
+  await pgPool.query('CREATE INDEX IF NOT EXISTS products_subcategory_id_idx ON products(subcategory_id)');
 }
 
 async function initSupabaseDatabase() {
@@ -233,29 +274,45 @@ async function createMySqlTables() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100) NOT NULL UNIQUE,
         slug VARCHAR(120) NOT NULL UNIQUE,
-        parent_category_id INT NULL,
+        description TEXT NULL,
+        image_url TEXT NULL,
+        icon_name VARCHAR(50) DEFAULT 'local_fire_department',
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB;
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS subcategories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        category_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        slug VARCHAR(120) NOT NULL UNIQUE,
         description TEXT NULL,
         image_url TEXT NULL,
         icon_name VARCHAR(50) DEFAULT 'local_fire_department',
         is_active TINYINT(1) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT categories_parent_category_fk
-          FOREIGN KEY (parent_category_id) REFERENCES categories(id) ON DELETE RESTRICT
+        UNIQUE KEY subcategories_category_name_unique (category_id, name),
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
       ) ENGINE=InnoDB;
     `);
-    const [parentCategoryColumns] = await conn.query(
-      "SHOW COLUMNS FROM categories LIKE 'parent_category_id'"
-    );
-    if (parentCategoryColumns.length === 0) {
-      await conn.query(
-        'ALTER TABLE categories ADD COLUMN parent_category_id INT NULL, ADD CONSTRAINT categories_parent_category_fk FOREIGN KEY (parent_category_id) REFERENCES categories(id) ON DELETE RESTRICT'
-      );
+    const [parentCategoryColumns] = await conn.query("SHOW COLUMNS FROM categories LIKE 'parent_category_id'");
+    if (parentCategoryColumns.length > 0) {
+      await conn.query(`
+        INSERT INTO subcategories (category_id, name, slug, description, image_url, icon_name, is_active, created_at)
+        SELECT parent_category_id, name, slug, description, image_url, icon_name, is_active, created_at
+        FROM categories WHERE parent_category_id IS NOT NULL
+        ON DUPLICATE KEY UPDATE category_id = VALUES(category_id), name = VALUES(name),
+          description = VALUES(description), image_url = VALUES(image_url),
+          icon_name = VALUES(icon_name), is_active = VALUES(is_active)
+      `);
     }
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS products (
         id INT AUTO_INCREMENT PRIMARY KEY,
         category_id INT NOT NULL,
+        subcategory_id INT NULL,
         name VARCHAR(200) NOT NULL,
         description TEXT NULL,
         price DECIMAL(10, 2) NOT NULL,
@@ -268,9 +325,30 @@ async function createMySqlTables() {
         is_active TINYINT(1) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
+        FOREIGN KEY (subcategory_id) REFERENCES subcategories(id) ON DELETE SET NULL
       ) ENGINE=InnoDB;
     `);
+    const [productSubcategoryColumns] = await conn.query("SHOW COLUMNS FROM products LIKE 'subcategory_id'");
+    if (productSubcategoryColumns.length === 0) {
+      await conn.query('ALTER TABLE products ADD COLUMN subcategory_id INT NULL');
+      await conn.query(`
+        ALTER TABLE products ADD CONSTRAINT products_subcategory_fk
+        FOREIGN KEY (subcategory_id) REFERENCES subcategories(id) ON DELETE SET NULL
+      `);
+    }
+    if (parentCategoryColumns.length > 0) {
+      await conn.query(`
+        UPDATE products p
+        JOIN categories legacy ON legacy.id = p.category_id
+        JOIN subcategories s ON s.slug = legacy.slug
+        SET p.category_id = s.category_id, p.subcategory_id = s.id
+        WHERE legacy.parent_category_id IS NOT NULL
+      `);
+      await conn.query('DELETE FROM categories WHERE parent_category_id IS NOT NULL');
+      await conn.query('ALTER TABLE categories DROP FOREIGN KEY categories_parent_category_fk');
+      await conn.query('ALTER TABLE categories DROP COLUMN parent_category_id');
+    }
     const [productImageColumns] = await conn.query(
       "SHOW COLUMNS FROM products LIKE 'image_urls'"
     );

@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
-const { EventEmitter } = require('node:events');
-const https = require('node:https');
+const { PassThrough } = require('node:stream');
 const test = require('node:test');
+const cloudinary = require('cloudinary').v2;
 const database = require('../config/db');
 
 const cloudinaryVariables = [
@@ -11,17 +11,21 @@ const cloudinaryVariables = [
 ];
 const previousEnvironment = new Map(cloudinaryVariables.map((name) => [name, process.env[name]]));
 const originalGetPool = database.getPool;
-const originalHttpsRequest = https.request;
+const originalUploadStream = cloudinary.uploader.upload_stream;
 const insertedProducts = [];
 let poolQueryCount = 0;
 let cloudinaryRequestCount = 0;
 let categoryIsAvailable = true;
+let subcategoryIsAvailable = true;
 
 const pool = {
   async query(sql, params = []) {
     poolQueryCount += 1;
-    if (/SELECT c\.id\s+FROM categories/i.test(sql)) {
+    if (/SELECT id\s+FROM categories/i.test(sql)) {
       return [categoryIsAvailable ? [{ id: params[0] }] : [], []];
+    }
+    if (/SELECT id\s+FROM subcategories/i.test(sql)) {
+      return [subcategoryIsAvailable ? [{ id: params[0] }] : [], []];
     }
     if (/^\s*INSERT\s+INTO products/i.test(sql)) {
       insertedProducts.push(params);
@@ -32,16 +36,19 @@ const pool = {
       return [[{
         id: 42,
         category_id: values[0],
-        name: values[1],
-        description: values[2],
-        price: values[3],
-        discount_price: values[4],
-        stock_quantity: values[5],
-        unit: values[6],
-        image_url: values[7],
-        image_urls: values[8],
-        is_featured: values[9],
-        is_active: values[10],
+        subcategory_id: values[1],
+        name: values[2],
+        description: values[3],
+        price: values[4],
+        discount_price: values[5],
+        stock_quantity: values[6],
+        unit: values[7],
+        image_url: values[8],
+        image_urls: values[9],
+        is_featured: values[10],
+        is_active: values[11],
+        category_root_name: 'Offerings',
+        subcategory_name: values[1] == null ? null : 'Incense',
       }], []];
     }
     if (/^\s*SELECT id FROM products WHERE id = \?/i.test(sql)) {
@@ -55,24 +62,19 @@ const pool = {
 };
 
 database.getPool = () => pool;
-https.request = (options, callback) => {
+cloudinary.uploader.upload_stream = (options, callback) => {
   cloudinaryRequestCount += 1;
-  assert.equal(options.hostname, 'api.cloudinary.com');
-  const request = new EventEmitter();
-  request.end = (body) => {
-    assert.ok(body.includes(Buffer.from('filename="ritual.jpg"')));
-    const response = new EventEmitter();
-    response.statusCode = 200;
-    callback(response);
-    process.nextTick(() => {
-      response.emit('data', Buffer.from(JSON.stringify({
-        secure_url: 'https://res.cloudinary.com/store/image/upload/ritual.jpg',
-      })));
-      response.emit('end');
+  assert.deepEqual(options, { resource_type: 'image', asset_folder: 'mkcreation' });
+  const uploadStream = new PassThrough();
+  const chunks = [];
+  uploadStream.on('data', (chunk) => chunks.push(chunk));
+  uploadStream.on('finish', () => {
+    assert.deepEqual(Buffer.concat(chunks), Buffer.from('image bytes'));
+    callback(null, {
+      secure_url: 'https://res.cloudinary.com/store/image/upload/ritual.jpg',
     });
-  };
-  request.destroy = (error) => request.emit('error', error);
-  return request;
+  });
+  return uploadStream;
 };
 
 const { createProduct, deleteProduct } = require('./productController');
@@ -124,12 +126,58 @@ test('uploads selected product images before saving Cloudinary URLs with the pro
   assert.equal(response.statusCode, 201);
   assert.equal(cloudinaryRequestCount, 1);
   assert.equal(insertedProducts.length, 1);
-  assert.equal(insertedProducts[0][7], 'https://res.cloudinary.com/store/image/upload/ritual.jpg');
-  assert.deepEqual(JSON.parse(insertedProducts[0][8]), [insertedProducts[0][7]]);
-  assert.equal(insertedProducts[0][9], 0);
-  assert.equal(insertedProducts[0][10], 1);
-  assert.equal(response.body.product.image_url, insertedProducts[0][7]);
-  assert.deepEqual(response.body.product.image_urls, [insertedProducts[0][7]]);
+  assert.equal(insertedProducts[0][0], 3);
+  assert.equal(insertedProducts[0][1], null);
+  assert.equal(insertedProducts[0][8], 'https://res.cloudinary.com/store/image/upload/ritual.jpg');
+  assert.deepEqual(JSON.parse(insertedProducts[0][9]), [insertedProducts[0][8]]);
+  assert.equal(insertedProducts[0][10], 0);
+  assert.equal(insertedProducts[0][11], 1);
+  assert.equal(response.body.product.image_url, insertedProducts[0][8]);
+  assert.deepEqual(response.body.product.image_urls, [insertedProducts[0][8]]);
+});
+
+test('links a product to a subcategory and its root category', async () => {
+  process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
+  process.env.CLOUDINARY_API_KEY = 'test-key';
+  process.env.CLOUDINARY_API_SECRET = 'test-secret';
+  insertedProducts.length = 0;
+  categoryIsAvailable = true;
+  subcategoryIsAvailable = true;
+
+  const response = createResponse();
+  await createProduct({
+    body: {
+      category_id: '3',
+      subcategory_id: '8',
+      name: 'Incense',
+      price: '249',
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(insertedProducts[0][0], 3);
+  assert.equal(insertedProducts[0][1], 8);
+  assert.equal(response.body.product.subcategory_id, 8);
+});
+
+test('rejects a subcategory that does not belong to the selected root category', async () => {
+  categoryIsAvailable = true;
+  subcategoryIsAvailable = false;
+  insertedProducts.length = 0;
+
+  const response = createResponse();
+  await createProduct({
+    body: {
+      category_id: '3',
+      subcategory_id: '8',
+      name: 'Incense',
+      price: '249',
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(insertedProducts.length, 0);
+  subcategoryIsAvailable = true;
 });
 
 test('does not save a product when Cloudinary is not configured', async () => {
@@ -205,7 +253,7 @@ test('soft-deletes products by deactivating them without removing their records'
 
 test.after(() => {
   database.getPool = originalGetPool;
-  https.request = originalHttpsRequest;
+  cloudinary.uploader.upload_stream = originalUploadStream;
   for (const [name, value] of previousEnvironment) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
