@@ -133,7 +133,7 @@ async function getProductById(req, res) {
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN categories parent ON parent.id = c.parent_category_id
-      WHERE p.id = ? AND c.is_active = 1
+      WHERE p.id = ? AND p.is_active = 1 AND c.is_active = 1
         AND (parent.id IS NULL OR parent.is_active = 1)
       LIMIT 1
     `, [req.params.id]);
@@ -292,12 +292,17 @@ async function updateProduct(req, res) {
 
 async function deleteProduct(req, res) {
   try {
-    const [result] = await getPool().query('DELETE FROM products WHERE id = ?', [req.params.id]);
-    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Product not found.' });
-    return res.json({ success: true, message: 'Product deleted successfully.' });
+    const pool = getPool();
+    const [products] = await pool.query('SELECT id FROM products WHERE id = ?', [req.params.id]);
+    if (products.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    await pool.query('UPDATE products SET is_active = 0 WHERE id = ?', [req.params.id]);
+    return res.json({ success: true, message: 'Product deactivated successfully.' });
   } catch (err) {
     console.error('[Product delete error]', err);
-    return res.status(500).json({ success: false, message: 'Failed to delete product.' });
+    return res.status(500).json({ success: false, message: 'Failed to deactivate product.' });
   }
 }
 

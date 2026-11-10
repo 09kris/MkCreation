@@ -44,6 +44,12 @@ const pool = {
         is_active: values[10],
       }], []];
     }
+    if (/^\s*SELECT id FROM products WHERE id = \?/i.test(sql)) {
+      return [params[0] === 42 ? [{ id: 42 }] : [], []];
+    }
+    if (/^\s*UPDATE products SET is_active = 0 WHERE id = \?/i.test(sql)) {
+      return [{ affectedRows: 1 }, []];
+    }
     throw new Error(`Unexpected database query: ${sql}`);
   },
 };
@@ -69,7 +75,7 @@ https.request = (options, callback) => {
   return request;
 };
 
-const { createProduct } = require('./productController');
+const { createProduct, deleteProduct } = require('./productController');
 
 function createResponse() {
   return {
@@ -174,6 +180,27 @@ test('rejects invalid product fields before uploading or writing to the database
   assert.match(response.body.message, /positive price/);
   assert.equal(cloudinaryRequestCount, 0);
   assert.equal(poolQueryCount, 0);
+});
+
+test('soft-deletes products by deactivating them without removing their records', async () => {
+  const queries = [];
+  pool.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+    if (sql.startsWith('SELECT id FROM products')) return [[{ id: 42 }], []];
+    if (sql.startsWith('UPDATE products SET is_active = 0')) return [{ affectedRows: 1 }, []];
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+
+  const response = createResponse();
+  await deleteProduct({ params: { id: '42' } }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body.message, /deactivated/);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('DELETE')), false);
+  assert.deepEqual(queries.at(-1), {
+    sql: 'UPDATE products SET is_active = 0 WHERE id = ?',
+    params: ['42'],
+  });
 });
 
 test.after(() => {

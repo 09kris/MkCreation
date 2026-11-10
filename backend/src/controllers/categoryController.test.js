@@ -60,7 +60,7 @@ test('admin category list includes inactive categories', async () => {
   assert.equal(response.body.categories[0].is_active, 0);
 });
 
-test('public product queries exclude products in inactive categories', async () => {
+test('public product queries exclude inactive products and categories', async () => {
   const queries = [];
   pool = {
     async query(sql) {
@@ -73,6 +73,7 @@ test('public product queries exclude products in inactive categories', async () 
   await getProductById({ params: { id: '12' } }, createResponse());
 
   assert.match(queries[0], /c\.is_active = 1/);
+  assert.match(queries[1], /p\.is_active = 1/);
   assert.match(queries[1], /c\.is_active = 1/);
 });
 
@@ -178,34 +179,14 @@ test('rejects a subcategory as the parent to prevent deeper nesting', async () =
   assert.match(response.body.message, /cannot have another parent/);
 });
 
-test('category deletion is refused while products still reference it', async () => {
+test('category soft deletion keeps the category and its related records', async () => {
   const calls = [];
   pool = {
     async query(sql, params) {
       calls.push({ sql, params });
-      if (sql.startsWith('SELECT COUNT(*) AS product_count')) {
-        return [[{ product_count: '2' }], []];
-      }
-      return [[{ child_count: '0' }], []];
-    },
-  };
-
-  const response = createResponse();
-  await deleteCategory({ params: { id: '8' } }, response);
-
-  assert.equal(response.statusCode, 409);
-  assert.match(response.body.message, /Deactivate/);
-  assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE')), false);
-});
-
-test('category deletion succeeds when no products reference it', async () => {
-  const calls = [];
-  pool = {
-    async query(sql, params) {
-      calls.push({ sql, params });
-      if (sql.startsWith('SELECT COUNT(*) AS product_count')) return [[{ product_count: 0 }], []];
-      if (sql.startsWith('SELECT COUNT(*) AS child_count')) return [[{ child_count: 0 }], []];
-      return [{ affectedRows: 1 }, []];
+      if (sql.startsWith('SELECT id FROM categories')) return [[{ id: 8 }], []];
+      if (sql.startsWith('UPDATE categories')) return [{ affectedRows: 1 }, []];
+      throw new Error(`Unexpected database query: ${sql}`);
     },
   };
 
@@ -213,5 +194,28 @@ test('category deletion succeeds when no products reference it', async () => {
   await deleteCategory({ params: { id: '8' } }, response);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE')), true);
+  assert.match(response.body.message, /deactivated/);
+  assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE')), false);
+  assert.deepEqual(calls.at(-1), {
+    sql: 'UPDATE categories SET is_active = 0 WHERE id = ?',
+    params: ['8'],
+  });
+});
+
+test('category soft deletion returns not found for a missing category', async () => {
+  const calls = [];
+  pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.startsWith('SELECT id FROM categories')) return [[], []];
+      throw new Error(`Unexpected database query: ${sql}`);
+    },
+  };
+
+  const response = createResponse();
+  await deleteCategory({ params: { id: '8' } }, response);
+
+  assert.equal(response.statusCode, 404);
+  assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE')), false);
+  assert.equal(calls.some(({ sql }) => sql.startsWith('UPDATE')), false);
 });

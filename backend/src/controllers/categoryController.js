@@ -269,37 +269,16 @@ async function deleteCategory(req, res) {
   try {
     const { id } = req.params;
     const pool = getPool();
-
-    const [products] = await pool.query(
-      'SELECT COUNT(*) AS product_count FROM products WHERE category_id = ?',
-      [id]
-    );
-    const [children] = await pool.query(
-      'SELECT COUNT(*) AS child_count FROM categories WHERE parent_category_id = ?',
-      [id]
-    );
-    if (Number(children[0]?.child_count) > 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'This category still has subcategories. Remove or move them before deleting it.',
-      });
-    }
-    if (Number(products[0]?.product_count) > 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'This category still has products. Deactivate it instead of deleting it.',
-      });
-    }
-
-    const [result] = await pool.query('DELETE FROM categories WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
+    const [categories] = await pool.query('SELECT id FROM categories WHERE id = ?', [id]);
+    if (categories.length === 0) {
       return res.status(404).json({ success: false, message: 'Category not found.' });
     }
 
-    return res.json({ success: true, message: 'Category deleted successfully.' });
+    await pool.query('UPDATE categories SET is_active = 0 WHERE id = ?', [id]);
+    return res.json({ success: true, message: 'Category deactivated successfully.' });
   } catch (err) {
     console.error('[Category delete error]', err);
-    return res.status(500).json({ success: false, message: 'Failed to delete category.' });
+    return res.status(500).json({ success: false, message: 'Failed to deactivate category.' });
   }
 }
 
