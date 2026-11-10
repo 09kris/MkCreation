@@ -1,5 +1,34 @@
 const crypto = require('node:crypto');
 const https = require('node:https');
+const cloudinary = require('cloudinary').v2;
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function validateImageFile(file) {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    const err = new Error('Please select a valid image file.');
+    err.status = 400;
+    throw err;
+  }
+  if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+    const err = new Error('Only JPG, PNG, and WEBP images are allowed.');
+    err.status = 400;
+    throw err;
+  }
+  if (file.buffer.length > MAX_IMAGE_SIZE) {
+    const err = new Error('Image size must be 5 MB or less.');
+    err.status = 400;
+    throw err;
+  }
+}
+
+function createCloudinarySignature(folder, timestamp, apiSecret) {
+  return cloudinary.utils.api_sign_request(
+    { asset_folder: folder, timestamp },
+    apiSecret
+  );
+}
 
 function assertCloudinaryConfigured() {
   const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
@@ -17,11 +46,11 @@ function assertCloudinaryConfigured() {
 }
 
 function uploadToCloudinary(file) {
+  validateImageFile(file);
   const { cloudName, apiKey, apiSecret, folder } = assertCloudinaryConfigured();
 
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signatureBase = `asset_folder=${folder}&timestamp=${timestamp}${apiSecret}`;
-  const signature = crypto.createHash('sha1').update(signatureBase).digest('hex');
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = createCloudinarySignature(folder, timestamp, apiSecret);
   const boundary = `----MkCreation${crypto.randomBytes(16).toString('hex')}`;
 
   const fields = { api_key: apiKey, asset_folder: folder, timestamp, signature };
@@ -106,9 +135,17 @@ async function uploadImages(req, res) {
     console.error('[Image upload error]', err.message);
     return res.status(err.status || 502).json({
       success: false,
-      message: err.status === 503 ? err.message : 'Could not upload the images to Cloudinary.',
+      message: err.status === 400 || err.status === 503
+        ? err.message
+        : 'Could not upload the images to Cloudinary.',
     });
   }
 }
 
-module.exports = { uploadImage: uploadImages, uploadImages, uploadFilesToCloudinary };
+module.exports = {
+  uploadImage: uploadImages,
+  uploadImages,
+  uploadFilesToCloudinary,
+  validateImageFile,
+  createCloudinarySignature,
+};

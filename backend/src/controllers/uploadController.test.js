@@ -1,6 +1,16 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { uploadImage } = require('./uploadController');
+const {
+  createCloudinarySignature,
+  uploadImage,
+} = require('./uploadController');
+
+test('generates Cloudinary signatures using the SDK', () => {
+  assert.equal(
+    createCloudinarySignature('mkcreation', 1234567890, 'test-secret'),
+    '8c4572b695e5bd4611c369cdab3e6eae2e8bc36f'
+  );
+});
 
 function createResponse() {
   return {
@@ -90,4 +100,32 @@ test('accepts multiple selected images from the images multipart field', async (
       }
     }
   }
+});
+
+test('rejects unsupported image types before attempting Cloudinary upload', async () => {
+  const response = createResponse();
+  await uploadImage({
+    file: {
+      originalname: 'product.gif',
+      mimetype: 'image/gif',
+      buffer: Buffer.from('image'),
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body.message, /Only JPG, PNG, and WEBP/);
+});
+
+test('rejects images larger than 5 MB before attempting Cloudinary upload', async () => {
+  const response = createResponse();
+  await uploadImage({
+    file: {
+      originalname: 'product.jpg',
+      mimetype: 'image/jpeg',
+      buffer: Buffer.alloc(5 * 1024 * 1024 + 1),
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body.message, /5 MB or less/);
 });

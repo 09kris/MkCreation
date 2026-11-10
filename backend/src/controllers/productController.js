@@ -212,7 +212,7 @@ async function createProduct(req, res) {
   } catch (err) {
     console.error('[Product create error]', err);
     const status = err.status || 500;
-    const message = status === 503 ? err.message : 'Failed to create product.';
+    const message = status === 400 || status === 503 ? err.message : 'Failed to create product.';
     return res.status(status).json({ success: false, message });
   }
 }
@@ -285,7 +285,7 @@ async function updateProduct(req, res) {
   } catch (err) {
     console.error('[Product update error]', err);
     const status = err.status || 500;
-    const message = status === 503 ? err.message : 'Failed to update product.';
+    const message = status === 400 || status === 503 ? err.message : 'Failed to update product.';
     return res.status(status).json({ success: false, message });
   }
 }
