@@ -81,7 +81,8 @@ function uploadToCloudinary(file) {
 }
 
 async function uploadImages(req, res) {
-  const files = req.files?.images || (req.files?.image ? [req.files.image[0]] : req.file ? [req.file] : []);
+  const files = Array.isArray(req.files) && req.files.length ? req.files
+    : req.files?.images || (req.files?.image ? [req.files.image[0]] : req.file ? [req.file] : []);
   if (!files.length) {
     return res.status(400).json({ success: false, message: 'Please select at least one image to upload.' });
   }
