@@ -17,10 +17,15 @@ let poolQueryCount = 0;
 let cloudinaryRequestCount = 0;
 let categoryIsAvailable = true;
 let subcategoryIsAvailable = true;
+const productListQueries = [];
 
 const pool = {
   async query(sql, params = []) {
     poolQueryCount += 1;
+    if (/^\s*SELECT p\.id, p\.category_id/i.test(sql)) {
+      productListQueries.push({ sql, params });
+      return [[], []];
+    }
     if (/SELECT id\s+FROM categories/i.test(sql)) {
       return [categoryIsAvailable ? [{ id: params[0] }] : [], []];
     }
@@ -77,7 +82,7 @@ cloudinary.uploader.upload_stream = (options, callback) => {
   return uploadStream;
 };
 
-const { createProduct, deleteProduct } = require('./productController');
+const { createProduct, deleteProduct, getAllProducts } = require('./productController');
 
 function createResponse() {
   return {
@@ -93,6 +98,17 @@ function createResponse() {
     },
   };
 }
+
+test('builds a valid product list query with category filtering', async () => {
+  productListQueries.length = 0;
+  const response = createResponse();
+
+  await getAllProducts({ query: { category_id: '4', limit: '100' } }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.match(productListQueries[0].sql, /c\.slug AS category_slug,\s*p\.name/);
+  assert.deepEqual(productListQueries[0].params, [4, 100, 0]);
+});
 
 test('uploads selected product images before saving Cloudinary URLs with the product', async () => {
   process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';

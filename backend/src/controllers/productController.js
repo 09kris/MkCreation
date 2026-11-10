@@ -60,7 +60,7 @@ async function getAllProducts(req, res) {
         CASE WHEN s.id IS NULL THEN c.name
           ELSE CONCAT(c.name, ' / ', s.name) END AS category_name,
         c.name AS category_root_name, s.name AS subcategory_name,
-        c.slug AS category_slug
+        c.slug AS category_slug,
         p.name, p.description, p.price, p.discount_price, p.stock_quantity, p.unit,
         p.image_url, p.image_urls, p.is_featured, p.is_active, p.created_at, p.updated_at
       FROM products p
