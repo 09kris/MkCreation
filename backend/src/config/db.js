@@ -95,6 +95,7 @@ async function createSupabaseTables(pgPool) {
       stock_quantity INTEGER NOT NULL DEFAULT 0,
       unit VARCHAR(50) DEFAULT 'piece',
       image_url TEXT,
+      image_urls TEXT,
       is_featured SMALLINT NOT NULL DEFAULT 0,
       is_active SMALLINT NOT NULL DEFAULT 1,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -153,6 +154,7 @@ async function createSupabaseTables(pgPool) {
   for (const statement of statements) {
     await pgPool.query(statement);
   }
+  await pgPool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_urls TEXT');
 }
 
 async function initSupabaseDatabase() {
@@ -246,6 +248,7 @@ async function createMySqlTables() {
         stock_quantity INT NOT NULL DEFAULT 0,
         unit VARCHAR(50) DEFAULT 'piece',
         image_url TEXT NULL,
+        image_urls TEXT NULL,
         is_featured TINYINT(1) DEFAULT 0,
         is_active TINYINT(1) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -253,6 +256,12 @@ async function createMySqlTables() {
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
       ) ENGINE=InnoDB;
     `);
+    const [productImageColumns] = await conn.query(
+      "SHOW COLUMNS FROM products LIKE 'image_urls'"
+    );
+    if (productImageColumns.length === 0) {
+      await conn.query('ALTER TABLE products ADD COLUMN image_urls TEXT NULL');
+    }
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS addresses (

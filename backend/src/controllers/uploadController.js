@@ -80,25 +80,33 @@ function uploadToCloudinary(file) {
   });
 }
 
-async function uploadImage(req, res) {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'Please select an image to upload.' });
+async function uploadImages(req, res) {
+  const files = req.files?.images || (req.files?.image ? [req.files.image[0]] : req.file ? [req.file] : []);
+  if (!files.length) {
+    return res.status(400).json({ success: false, message: 'Please select at least one image to upload.' });
   }
 
   try {
-    const imageUrl = await uploadToCloudinary(req.file);
+    const imageUrls = [];
+    for (const file of files) {
+      imageUrls.push(await uploadToCloudinary(file));
+    }
+
     return res.status(201).json({
       success: true,
-      message: 'Image uploaded successfully.',
-      image_url: imageUrl,
+      message: imageUrls.length === 1 ? 'Image uploaded successfully.' : 'Images uploaded successfully.',
+      image_url: imageUrls[0],
+      image_urls: imageUrls,
     });
   } catch (err) {
     console.error('[Image upload error]', err.message);
     return res.status(err.status || 502).json({
       success: false,
-      message: err.status === 503 ? err.message : 'Could not upload the image to Cloudinary.',
+      message: err.status === 503 ? err.message : 'Could not upload the images to Cloudinary.',
     });
   }
 }
 
-module.exports = { uploadImage };
+const uploadImage = uploadImages;
+
+module.exports = { uploadImage, uploadImages };

@@ -56,3 +56,38 @@ test('reports missing Cloudinary configuration without attempting an upload', as
     }
   }
 });
+
+test('accepts multiple selected images from the images multipart field', async () => {
+  const names = [
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+  ];
+  const previousValues = new Map(
+    names.map((name) => [name, process.env[name]])
+  );
+  names.forEach((name) => delete process.env[name]);
+
+  try {
+    const response = createResponse();
+    await uploadImage({
+      files: {
+        images: [
+          { originalname: 'product-1.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('image-1') },
+          { originalname: 'product-2.png', mimetype: 'image/png', buffer: Buffer.from('image-2') },
+        ],
+      },
+    }, response);
+
+    assert.equal(response.statusCode, 503);
+    assert.match(response.body.message, /Cloudinary is not configured/);
+  } finally {
+    for (const [name, value] of previousValues) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+});

@@ -7,7 +7,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
   fileFilter: (req, file, callback) => {
     if (!file.mimetype.startsWith('image/')) {
       callback(new Error('Only image files can be uploaded.'));
@@ -24,14 +24,17 @@ router.post(
   authenticateToken,
   requireAdmin,
   (req, res, next) => {
-    imageUpload.single('image')(req, res, (err) => {
+    imageUpload.fields([
+      { name: 'image', maxCount: 1 },
+      { name: 'images', maxCount: 10 },
+    ])(req, res, (err) => {
       if (err) {
         return res.status(400).json({ success: false, message: err.message });
       }
       next();
     });
   },
-  uploadController.uploadImage
+  uploadController.uploadImages
 );
 
 module.exports = router;
