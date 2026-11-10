@@ -6,6 +6,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // Customer routes (authenticated)
 router.post('/', authenticateToken, orderController.createOrder);
 router.get('/my-orders', authenticateToken, orderController.getMyOrders);
+router.put('/:id/cancel', authenticateToken, orderController.cancelMyOrder);
 
 // Admin-only order routes (registered before /:id)
 router.get('/admin/all', authenticateToken, requireAdmin, orderController.getAllOrdersAdmin);

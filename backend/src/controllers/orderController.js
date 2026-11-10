@@ -173,6 +173,86 @@ async function getMyOrders(req, res) {
   }
 }
 
+async function cancelOrder(req, res, { admin = false, paymentStatus } = {}) {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    const orderQuery = admin
+      ? 'SELECT id, order_status FROM orders WHERE id = ? FOR UPDATE'
+      : 'SELECT id, order_status FROM orders WHERE id = ? AND user_id = ? FOR UPDATE';
+    const [orders] = await conn.query(
+      orderQuery,
+      admin ? [req.params.id] : [req.params.id, req.user.id]
+    );
+
+    if (orders.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Order not found.' });
+    }
+
+    const order = orders[0];
+    if (!['pending', 'confirmed', 'processing'].includes(order.order_status)) {
+      if (admin && order.order_status === 'cancelled' && paymentStatus !== undefined) {
+        await conn.query(
+          'UPDATE orders SET payment_status = ? WHERE id = ?',
+          [paymentStatus, order.id]
+        );
+        await conn.commit();
+        return res.json({
+          success: true,
+          message: 'Order status updated successfully.',
+          order: { id: order.id, order_status: 'cancelled', payment_status: paymentStatus },
+        });
+      }
+
+      await conn.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'This order can no longer be cancelled.',
+      });
+    }
+
+    const [items] = await conn.query(
+      'SELECT product_id, quantity FROM order_items WHERE order_id = ?',
+      [order.id]
+    );
+
+    for (const item of items) {
+      if (item.product_id !== null) {
+        await conn.query(
+          'UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?',
+          [item.quantity, item.product_id]
+        );
+      }
+    }
+
+    await conn.query(
+      'UPDATE orders SET order_status = ?, payment_status = COALESCE(?, payment_status) WHERE id = ?',
+      ['cancelled', paymentStatus ?? null, order.id]
+    );
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: admin ? 'Order status updated successfully.' : 'Order cancelled successfully.',
+      order: { id: order.id, order_status: 'cancelled', payment_status: paymentStatus },
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('[Order cancel error]', err);
+    return res.status(500).json({ success: false, message: 'Failed to cancel order.' });
+  } finally {
+    conn.release();
+  }
+}
+
+async function cancelMyOrder(req, res) {
+  return cancelOrder(req, res);
+}
+
 async function getOrderById(req, res) {
   try {
     const { id } = req.params;
@@ -268,6 +348,10 @@ async function updateOrderStatusAdmin(req, res) {
       });
     }
 
+    if (order_status === 'cancelled') {
+      return cancelOrder(req, res, { admin: true, paymentStatus: payment_status });
+    }
+
     await pool.query(`
       UPDATE orders 
       SET 
@@ -295,6 +379,7 @@ async function updateOrderStatusAdmin(req, res) {
 module.exports = {
   createOrder,
   getMyOrders,
+  cancelMyOrder,
   getOrderById,
   getAllOrdersAdmin,
   updateOrderStatusAdmin,
