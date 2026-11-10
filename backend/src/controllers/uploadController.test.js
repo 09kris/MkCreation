@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const cloudinary = require('cloudinary').v2;
 const {
   createCloudinarySignature,
   uploadImage,
+  uploadFilesToCloudinary,
 } = require('./uploadController');
 
 test('generates Cloudinary signatures using the SDK', () => {
@@ -10,6 +12,42 @@ test('generates Cloudinary signatures using the SDK', () => {
     createCloudinarySignature('mkcreation', 1234567890, 'test-secret'),
     '8c4572b695e5bd4611c369cdab3e6eae2e8bc36f'
   );
+});
+
+test('uploads to Cloudinary and removes the integration-test image', {
+  skip: process.env.CLOUDINARY_INTEGRATION_TEST !== '1',
+}, async () => {
+  require('dotenv').config();
+  const folder = process.env.CLOUDINARY_FOLDER?.trim() || 'mkcreation';
+  const image = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/S2cAAAAASUVORK5CYII=',
+    'base64'
+  );
+  let publicId;
+
+  try {
+    const [url] = await uploadFilesToCloudinary([{
+      originalname: 'cloudinary-integration-test.png',
+      mimetype: 'image/png',
+      buffer: image,
+    }]);
+    const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+    const uploadIndex = pathParts.indexOf('upload');
+    assert.notEqual(uploadIndex, -1, 'Cloudinary URL should contain the upload path');
+
+    const idParts = pathParts.slice(uploadIndex + 1);
+    if (/^v\d+$/.test(idParts[0] || '')) idParts.shift();
+    const lastPart = idParts.pop();
+    assert.ok(lastPart, 'Cloudinary URL should contain an uploaded image ID');
+    idParts.push(lastPart.replace(/\.[^.]+$/, ''));
+    publicId = idParts.join('/');
+    assert.ok(url.startsWith('https://res.cloudinary.com/'));
+  } finally {
+    if (publicId) {
+      const result = await cloudinary.uploader.destroy(publicId);
+      assert.equal(result.result, 'ok', 'Cloudinary should remove the integration-test image');
+    }
+  }
 });
 
 function createResponse() {

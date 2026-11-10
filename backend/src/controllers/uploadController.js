@@ -31,7 +31,9 @@ function createCloudinarySignature(folder, timestamp, apiSecret) {
 }
 
 function assertCloudinaryConfigured() {
-  const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
+  const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+  const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY?.trim();
+  const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET?.trim();
   if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
     const err = new Error('Cloudinary is not configured on the server.');
     err.status = 503;
@@ -46,13 +48,6 @@ function assertCloudinaryConfigured() {
 }
 
 function uploadToCloudinary(file) {
-  console.log('[Cloudinary Config]', {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim(),
-    apiKeyPresent: !!process.env.CLOUDINARY_API_KEY?.trim(),
-    apiSecretPresent: !!process.env.CLOUDINARY_API_SECRET?.trim(),
-    apiSecretLength: process.env.CLOUDINARY_API_SECRET?.trim().length,
-    folder: process.env.CLOUDINARY_FOLDER || 'mkcreation'
-});
   validateImageFile(file);
   const { cloudName, apiKey, apiSecret, folder } = assertCloudinaryConfigured();
 
@@ -126,13 +121,6 @@ function getUploadedFiles(req) {
 
 async function uploadImages(req, res) {
   const files = getUploadedFiles(req);
-  console.log('[Cloudinary Config]', {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim(),
-    apiKeyPresent: !!process.env.CLOUDINARY_API_KEY?.trim(),
-    apiSecretPresent: !!process.env.CLOUDINARY_API_SECRET?.trim(),
-    apiSecretLength: process.env.CLOUDINARY_API_SECRET?.trim().length,
-    folder: process.env.CLOUDINARY_FOLDER || 'mkcreation'
-});
   if (!files.length) {
     return res.status(400).json({ success: false, message: 'Please select at least one image to upload.' });
   }
