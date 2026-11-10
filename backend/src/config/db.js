@@ -79,6 +79,7 @@ async function createSupabaseTables(pgPool) {
       id SERIAL PRIMARY KEY,
       name VARCHAR(100) NOT NULL UNIQUE,
       slug VARCHAR(120) NOT NULL UNIQUE,
+      parent_category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
       description TEXT,
       image_url TEXT,
       icon_name VARCHAR(50) DEFAULT 'local_fire_department',
@@ -154,6 +155,9 @@ async function createSupabaseTables(pgPool) {
   for (const statement of statements) {
     await pgPool.query(statement);
   }
+  await pgPool.query(
+    'ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT'
+  );
   await pgPool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_urls TEXT');
 }
 
@@ -229,13 +233,24 @@ async function createMySqlTables() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100) NOT NULL UNIQUE,
         slug VARCHAR(120) NOT NULL UNIQUE,
+        parent_category_id INT NULL,
         description TEXT NULL,
         image_url TEXT NULL,
         icon_name VARCHAR(50) DEFAULT 'local_fire_department',
         is_active TINYINT(1) DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT categories_parent_category_fk
+          FOREIGN KEY (parent_category_id) REFERENCES categories(id) ON DELETE RESTRICT
       ) ENGINE=InnoDB;
     `);
+    const [parentCategoryColumns] = await conn.query(
+      "SHOW COLUMNS FROM categories LIKE 'parent_category_id'"
+    );
+    if (parentCategoryColumns.length === 0) {
+      await conn.query(
+        'ALTER TABLE categories ADD COLUMN parent_category_id INT NULL, ADD CONSTRAINT categories_parent_category_fk FOREIGN KEY (parent_category_id) REFERENCES categories(id) ON DELETE RESTRICT'
+      );
+    }
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS products (

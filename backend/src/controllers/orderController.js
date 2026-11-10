@@ -33,7 +33,18 @@ async function createOrder(req, res) {
     // Verify each item and check stock
     for (const item of items) {
       const [productRows] = await conn.query(
-        'SELECT id, name, price, discount_price, stock_quantity, image_url, is_active FROM products WHERE id = ? FOR UPDATE',
+        `SELECT id, name, price, discount_price, stock_quantity, image_url, is_active
+         FROM products
+         WHERE id = ?
+           AND EXISTS (
+             SELECT 1
+             FROM categories
+             LEFT JOIN categories parent ON parent.id = categories.parent_category_id
+             WHERE categories.id = products.category_id
+               AND categories.is_active = 1
+               AND (parent.id IS NULL OR parent.is_active = 1)
+           )
+         FOR UPDATE`,
         [item.product_id]
       );
 

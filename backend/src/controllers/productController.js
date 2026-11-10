@@ -20,6 +20,17 @@ function parseBoolean(value, fallback = false) {
   return value === true || value === 1 || ['true', '1', 'on'].includes(String(value).toLowerCase());
 }
 
+async function categoryIsActive(pool, categoryId) {
+  const [categories] = await pool.query(`
+    SELECT c.id
+    FROM categories c
+    LEFT JOIN categories parent ON parent.id = c.parent_category_id
+    WHERE c.id = ? AND c.is_active = 1
+      AND (parent.id IS NULL OR parent.is_active = 1)
+  `, [categoryId]);
+  return categories.length > 0;
+}
+
 async function resolveImageUrls(req, existingUrls = []) {
   const uploadedFiles = Array.isArray(req.files) && req.files.length ? req.files : req.file ? [req.file] : [];
   const bodyUrls = parseImageUrls(req.body.image_urls, req.body.image_url);
@@ -39,19 +50,36 @@ async function getAllProducts(req, res) {
     const pool = getPool();
 
     let query = `
-      SELECT p.id, p.category_id, c.name AS category_name, c.slug AS category_slug,
+      SELECT p.id, p.category_id,
+        CASE WHEN parent.id IS NULL THEN c.name
+          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
+        c.slug AS category_slug,
+        c.parent_category_id, parent.name AS parent_category_name,
         p.name, p.description, p.price, p.discount_price, p.stock_quantity, p.unit,
         p.image_url, p.image_urls, p.is_featured, p.is_active, p.created_at, p.updated_at
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN categories parent ON parent.id = c.parent_category_id
       WHERE 1=1
     `;
     const params = [];
 
-    if (category_id) { query += ' AND p.category_id = ?'; params.push(parseInt(category_id, 10)); }
+    if (category_id) {
+      query += ` AND (
+        p.category_id = ?
+        OR EXISTS (
+          SELECT 1 FROM categories subcategory
+          WHERE subcategory.id = p.category_id
+            AND subcategory.parent_category_id = ?
+        )
+      )`;
+      params.push(parseInt(category_id, 10), parseInt(category_id, 10));
+    }
     if (search?.trim()) { query += ' AND (p.name LIKE ? OR p.description LIKE ?)'; params.push(`%${search.trim()}%`, `%${search.trim()}%`); }
     if (featured === 'true' || featured === '1') query += ' AND p.is_featured = 1';
-    if (req.query.all !== 'true') query += ' AND p.is_active = 1';
+    if (req.query.all !== 'true') {
+      query += ' AND p.is_active = 1 AND c.is_active = 1 AND (parent.id IS NULL OR parent.is_active = 1)';
+    }
 
     if (sort === 'price_asc') query += ' ORDER BY COALESCE(p.discount_price, p.price) ASC';
     else if (sort === 'price_desc') query += ' ORDER BY COALESCE(p.discount_price, p.price) DESC';
@@ -75,10 +103,15 @@ async function getFeaturedProducts(req, res) {
   try {
     const pool = getPool();
     const [products] = await pool.query(`
-      SELECT p.*, c.name AS category_name
+      SELECT p.*,
+        CASE WHEN parent.id IS NULL THEN c.name
+          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
+        c.parent_category_id, parent.name AS parent_category_name
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.is_featured = 1 AND p.is_active = 1
+      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      WHERE p.is_featured = 1 AND p.is_active = 1 AND c.is_active = 1
+        AND (parent.id IS NULL OR parent.is_active = 1)
       ORDER BY p.id DESC LIMIT 10
     `);
     return res.json({ success: true, products: products.map(withProductImages) });
@@ -92,10 +125,17 @@ async function getProductById(req, res) {
   try {
     const pool = getPool();
     const [products] = await pool.query(`
-      SELECT p.*, c.name AS category_name, c.slug AS category_slug
+      SELECT p.*,
+        CASE WHEN parent.id IS NULL THEN c.name
+          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
+        c.slug AS category_slug,
+        c.parent_category_id, parent.name AS parent_category_name
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.id = ? LIMIT 1
+      LEFT JOIN categories parent ON parent.id = c.parent_category_id
+      WHERE p.id = ? AND c.is_active = 1
+        AND (parent.id IS NULL OR parent.is_active = 1)
+      LIMIT 1
     `, [req.params.id]);
 
     if (!products.length) return res.status(404).json({ success: false, message: 'Product not found.' });
@@ -130,10 +170,16 @@ async function createProduct(req, res) {
       });
     }
 
+    const pool = getPool();
+    if (!await categoryIsActive(pool, categoryId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose an active category or subcategory for this product.',
+      });
+    }
+
     const imageUrls = await resolveImageUrls(req);
     const primaryImageUrl = imageUrls[0] || null;
-
-    const pool = getPool();
     const [result] = await pool.query(`
       INSERT INTO products (category_id, name, description, price, discount_price, stock_quantity, unit, image_url, image_urls, is_featured, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -152,8 +198,13 @@ async function createProduct(req, res) {
     ]);
 
     const [newProduct] = await pool.query(`
-      SELECT p.*, c.name AS category_name
-      FROM products p LEFT JOIN categories c ON c.id = p.category_id
+      SELECT p.*,
+        CASE WHEN parent.id IS NULL THEN c.name
+          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
+        c.parent_category_id, parent.name AS parent_category_name
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN categories parent ON parent.id = c.parent_category_id
       WHERE p.id = ?
     `, [result.insertId]);
 
@@ -174,6 +225,13 @@ async function updateProduct(req, res) {
     const pool = getPool();
     const [existing] = await pool.query('SELECT image_url, image_urls FROM products WHERE id = ?', [id]);
     if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found.' });
+    if (category_id !== undefined && category_id !== null &&
+        !await categoryIsActive(pool, Number(category_id))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose an active category or subcategory for this product.',
+      });
+    }
 
     const hasNewImages = (Array.isArray(req.files) && req.files.length) || req.file || req.body.image_urls || req.body.image_url;
     const existingUrls = parseImageUrls(existing[0].image_urls, existing[0].image_url);
@@ -213,8 +271,13 @@ async function updateProduct(req, res) {
     ]);
 
     const [updated] = await pool.query(`
-      SELECT p.*, c.name AS category_name
-      FROM products p LEFT JOIN categories c ON c.id = p.category_id
+      SELECT p.*,
+        CASE WHEN parent.id IS NULL THEN c.name
+          ELSE CONCAT(parent.name, ' / ', c.name) END AS category_name,
+        c.parent_category_id, parent.name AS parent_category_name
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN categories parent ON parent.id = c.parent_category_id
       WHERE p.id = ?
     `, [id]);
 

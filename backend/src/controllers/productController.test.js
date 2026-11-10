@@ -15,10 +15,14 @@ const originalHttpsRequest = https.request;
 const insertedProducts = [];
 let poolQueryCount = 0;
 let cloudinaryRequestCount = 0;
+let categoryIsAvailable = true;
 
 const pool = {
   async query(sql, params = []) {
     poolQueryCount += 1;
+    if (/SELECT c\.id\s+FROM categories/i.test(sql)) {
+      return [categoryIsAvailable ? [{ id: params[0] }] : [], []];
+    }
     if (/^\s*INSERT\s+INTO products/i.test(sql)) {
       insertedProducts.push(params);
       return [{ insertId: 42 }, []];
@@ -87,6 +91,7 @@ test('uploads selected product images before saving Cloudinary URLs with the pro
   process.env.CLOUDINARY_API_KEY = 'test-key';
   process.env.CLOUDINARY_API_SECRET = 'test-secret';
   insertedProducts.length = 0;
+  categoryIsAvailable = true;
   poolQueryCount = 0;
   cloudinaryRequestCount = 0;
 
@@ -126,6 +131,7 @@ test('does not save a product when Cloudinary is not configured', async () => {
   delete process.env.CLOUDINARY_API_KEY;
   delete process.env.CLOUDINARY_API_SECRET;
   insertedProducts.length = 0;
+  categoryIsAvailable = true;
   poolQueryCount = 0;
   cloudinaryRequestCount = 0;
 
@@ -142,7 +148,7 @@ test('does not save a product when Cloudinary is not configured', async () => {
   assert.equal(response.statusCode, 503);
   assert.match(response.body.message, /Cloudinary is not configured/);
   assert.equal(cloudinaryRequestCount, 0);
-  assert.equal(poolQueryCount, 0);
+  assert.equal(poolQueryCount, 1);
 });
 
 test('rejects invalid product fields before uploading or writing to the database', async () => {
@@ -150,6 +156,7 @@ test('rejects invalid product fields before uploading or writing to the database
   delete process.env.CLOUDINARY_API_KEY;
   delete process.env.CLOUDINARY_API_SECRET;
   insertedProducts.length = 0;
+  categoryIsAvailable = true;
   poolQueryCount = 0;
   cloudinaryRequestCount = 0;
 

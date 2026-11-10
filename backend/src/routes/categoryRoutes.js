@@ -4,6 +4,7 @@ const categoryController = require('../controllers/categoryController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // Public routes
+router.get('/admin/all', authenticateToken, requireAdmin, categoryController.getAllCategoriesAdmin);
 router.get('/', categoryController.getAllCategories);
 router.get('/:id', categoryController.getCategoryById);
 
