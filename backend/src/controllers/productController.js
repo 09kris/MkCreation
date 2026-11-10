@@ -1,33 +1,36 @@
 const { getPool } = require('../config/db');
+const { uploadFilesToCloudinary } = require('./uploadController');
 
 function parseImageUrls(value, fallback) {
   let urls = value;
   if (typeof urls === 'string') {
-    try {
-      urls = JSON.parse(urls);
-    } catch {
-      urls = [];
-    }
+    try { urls = JSON.parse(urls); } catch { urls = []; }
   }
-
-  if (!Array.isArray(urls)) {
-    urls = fallback ? [fallback] : [];
-  }
-
-  return urls
-    .filter((url) => typeof url === 'string')
-    .map((url) => url.trim())
-    .filter(Boolean)
-    .slice(0, 10);
+  if (!Array.isArray(urls)) urls = fallback ? [fallback] : [];
+  return urls.filter((u) => typeof u === 'string').map((u) => u.trim()).filter(Boolean).slice(0, 10);
 }
 
 function withProductImages(product) {
   const imageUrls = parseImageUrls(product.image_urls, product.image_url);
-  return {
-    ...product,
-    image_urls: imageUrls,
-    image_url: product.image_url || imageUrls[0] || null,
-  };
+  return { ...product, image_urls: imageUrls, image_url: product.image_url || imageUrls[0] || null };
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return value === true || value === 1 || ['true', '1', 'on'].includes(String(value).toLowerCase());
+}
+
+async function resolveImageUrls(req, existingUrls = []) {
+  const uploadedFiles = Array.isArray(req.files) && req.files.length ? req.files : req.file ? [req.file] : [];
+  const bodyUrls = parseImageUrls(req.body.image_urls, req.body.image_url);
+
+  let cloudinaryUrls = [];
+  if (uploadedFiles.length) {
+    cloudinaryUrls = await uploadFilesToCloudinary(uploadedFiles);
+  }
+
+  const merged = [...new Set([...cloudinaryUrls, ...bodyUrls])].slice(0, 10);
+  return merged.length ? merged : existingUrls;
 }
 
 async function getAllProducts(req, res) {
@@ -36,77 +39,32 @@ async function getAllProducts(req, res) {
     const pool = getPool();
 
     let query = `
-      SELECT 
-        p.id,
-        p.category_id,
-        c.name AS category_name,
-        c.slug AS category_slug,
-        p.name,
-        p.description,
-        p.price,
-        p.discount_price,
-        p.stock_quantity,
-        p.unit,
-        p.image_url,
-        p.image_urls,
-        p.is_featured,
-        p.is_active,
-        p.created_at,
-        p.updated_at
+      SELECT p.id, p.category_id, c.name AS category_name, c.slug AS category_slug,
+        p.name, p.description, p.price, p.discount_price, p.stock_quantity, p.unit,
+        p.image_url, p.image_urls, p.is_featured, p.is_active, p.created_at, p.updated_at
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       WHERE 1=1
     `;
-
     const params = [];
 
-    // Filter by category
-    if (category_id) {
-      query += ' AND p.category_id = ?';
-      params.push(parseInt(category_id, 10));
-    }
+    if (category_id) { query += ' AND p.category_id = ?'; params.push(parseInt(category_id, 10)); }
+    if (search?.trim()) { query += ' AND (p.name LIKE ? OR p.description LIKE ?)'; params.push(`%${search.trim()}%`, `%${search.trim()}%`); }
+    if (featured === 'true' || featured === '1') query += ' AND p.is_featured = 1';
+    if (req.query.all !== 'true') query += ' AND p.is_active = 1';
 
-    // Filter by search keyword
-    if (search && search.trim() !== '') {
-      query += ' AND (p.name LIKE ? OR p.description LIKE ?)';
-      params.push(`%${search.trim()}%`, `%${search.trim()}%`);
-    }
+    if (sort === 'price_asc') query += ' ORDER BY COALESCE(p.discount_price, p.price) ASC';
+    else if (sort === 'price_desc') query += ' ORDER BY COALESCE(p.discount_price, p.price) DESC';
+    else if (sort === 'newest') query += ' ORDER BY p.created_at DESC';
+    else query += ' ORDER BY p.is_featured DESC, p.id DESC';
 
-    // Filter by featured
-    if (featured === 'true' || featured === '1') {
-      query += ' AND p.is_featured = 1';
-    }
-
-    // Only active products for general storefront unless requested otherwise
-    if (req.query.all !== 'true') {
-      query += ' AND p.is_active = 1';
-    }
-
-    // Sorting
-    if (sort === 'price_asc') {
-      query += ' ORDER BY COALESCE(p.discount_price, p.price) ASC';
-    } else if (sort === 'price_desc') {
-      query += ' ORDER BY COALESCE(p.discount_price, p.price) DESC';
-    } else if (sort === 'newest') {
-      query += ' ORDER BY p.created_at DESC';
-    } else {
-      query += ' ORDER BY p.is_featured DESC, p.id DESC';
-    }
-
-    // Pagination
     const numLimit = Math.max(1, parseInt(limit, 10));
     const offset = Math.max(0, (parseInt(page, 10) - 1) * numLimit);
     query += ' LIMIT ? OFFSET ?';
     params.push(numLimit, offset);
 
     const [products] = await pool.query(query, params);
-
-    const productsWithImages = products.map(withProductImages);
-    return res.json({
-      success: true,
-      count: productsWithImages.length,
-      products: productsWithImages,
-    });
+    return res.json({ success: true, count: products.length, products: products.map(withProductImages) });
   } catch (err) {
     console.error('[Products getAll error]', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch products.' });
@@ -117,20 +75,13 @@ async function getFeaturedProducts(req, res) {
   try {
     const pool = getPool();
     const [products] = await pool.query(`
-      SELECT 
-        p.*, 
-        c.name AS category_name 
+      SELECT p.*, c.name AS category_name
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       WHERE p.is_featured = 1 AND p.is_active = 1
-      ORDER BY p.id DESC
-      LIMIT 10
+      ORDER BY p.id DESC LIMIT 10
     `);
-
-    return res.json({
-      success: true,
-      products: products.map(withProductImages),
-    });
+    return res.json({ success: true, products: products.map(withProductImages) });
   } catch (err) {
     console.error('[Products getFeatured error]', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch featured products.' });
@@ -139,28 +90,16 @@ async function getFeaturedProducts(req, res) {
 
 async function getProductById(req, res) {
   try {
-    const { id } = req.params;
     const pool = getPool();
-
     const [products] = await pool.query(`
-      SELECT 
-        p.*, 
-        c.name AS category_name,
-        c.slug AS category_slug
+      SELECT p.*, c.name AS category_name, c.slug AS category_slug
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.id = ?
-      LIMIT 1
-    `, [id]);
+      WHERE p.id = ? LIMIT 1
+    `, [req.params.id]);
 
-    if (products.length === 0) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
-    }
-
-    return res.json({
-      success: true,
-      product: withProductImages(products[0]),
-    });
+    if (!products.length) return res.status(404).json({ success: false, message: 'Product not found.' });
+    return res.json({ success: true, product: withProductImages(products[0]) });
   } catch (err) {
     console.error('[Product getById error]', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch product details.' });
@@ -169,201 +108,134 @@ async function getProductById(req, res) {
 
 async function createProduct(req, res) {
   try {
-    const {
-      category_id,
-      name,
-      description,
-      price,
-      discount_price,
-      stock_quantity,
-      unit,
-      image_url,
-      image_urls,
-      is_featured,
-      is_active,
-    } = req.body;
+    const { category_id, name, description, price, discount_price, stock_quantity, unit, is_featured, is_active } = req.body;
+    const productName = typeof name === 'string' ? name.trim() : '';
+    const categoryId = Number(category_id);
+    const productPrice = Number(price);
+    const discountPrice = discount_price === undefined || discount_price === null || discount_price === ''
+      ? null
+      : Number(discount_price);
+    const stockQuantity = stock_quantity === undefined || stock_quantity === '' ? 0 : Number(stock_quantity);
+    const productUnit = typeof unit === 'string' && unit.trim() ? unit.trim() : 'piece';
 
-    if (!name || !price || !category_id) {
+    if (!productName || productName.length > 200 ||
+      !Number.isInteger(categoryId) || categoryId < 1 ||
+      !Number.isFinite(productPrice) || productPrice <= 0 || productPrice > 99999999.99 ||
+      (discountPrice !== null && (!Number.isFinite(discountPrice) || discountPrice < 0 || discountPrice >= productPrice)) ||
+      !Number.isSafeInteger(stockQuantity) || stockQuantity < 0 || stockQuantity > 2147483647 ||
+      productUnit.length > 50) {
       return res.status(400).json({
         success: false,
-        message: 'Name, price, and category_id are required fields.',
+        message: 'Enter a product name, valid category, positive price, valid sale price, and non-negative stock quantity.',
       });
     }
-    if (image_urls !== undefined && !Array.isArray(image_urls)) {
-      return res.status(400).json({ success: false, message: 'image_urls must be an array of image URLs.' });
-    }
-    if (Array.isArray(image_urls) && image_urls.some((url) => typeof url !== 'string')) {
-      return res.status(400).json({ success: false, message: 'Each image URL must be a string.' });
-    }
-    if (Array.isArray(image_urls) && image_urls.length > 10) {
-      return res.status(400).json({ success: false, message: 'A product can have up to 10 images.' });
-    }
+
+    const imageUrls = await resolveImageUrls(req);
+    const primaryImageUrl = imageUrls[0] || null;
 
     const pool = getPool();
-    const normalizedImageUrls = parseImageUrls(
-      image_urls,
-      typeof image_url === 'string' ? image_url : null
-    );
-    const primaryImageUrl = normalizedImageUrls[0] || image_url || null;
     const [result] = await pool.query(`
-      INSERT INTO products (
-        category_id, name, description, price, discount_price, stock_quantity, unit, image_url, image_urls, is_featured, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (category_id, name, description, price, discount_price, stock_quantity, unit, image_url, image_urls, is_featured, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      category_id,
-      name.trim(),
-      description || null,
-      parseFloat(price),
-      discount_price ? parseFloat(discount_price) : null,
-      parseInt(stock_quantity || 0, 10),
-      unit || 'piece',
+      categoryId,
+      productName,
+      typeof description === 'string' && description.trim() ? description.trim() : null,
+      productPrice,
+      discountPrice,
+      stockQuantity,
+      productUnit,
       primaryImageUrl,
-      JSON.stringify(normalizedImageUrls),
-      is_featured ? 1 : 0,
-      is_active !== undefined ? (is_active ? 1 : 0) : 1,
+      JSON.stringify(imageUrls),
+      parseBoolean(is_featured) ? 1 : 0,
+      parseBoolean(is_active, true) ? 1 : 0,
     ]);
 
     const [newProduct] = await pool.query(`
-      SELECT p.*, c.name AS category_name 
-      FROM products p 
-      LEFT JOIN categories c ON c.id = p.category_id 
+      SELECT p.*, c.name AS category_name
+      FROM products p LEFT JOIN categories c ON c.id = p.category_id
       WHERE p.id = ?
     `, [result.insertId]);
 
-    return res.status(201).json({
-      success: true,
-      message: 'Product created successfully.',
-      product: withProductImages(newProduct[0]),
-    });
+    return res.status(201).json({ success: true, message: 'Product created successfully.', product: withProductImages(newProduct[0]) });
   } catch (err) {
     console.error('[Product create error]', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to create product.',
-      error: err.message,
-    });
+    const status = err.status || 500;
+    const message = status === 503 ? err.message : 'Failed to create product.';
+    return res.status(status).json({ success: false, message });
   }
 }
 
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const {
-      category_id,
-      name,
-      description,
-      price,
-      discount_price,
-      stock_quantity,
-      unit,
-      image_url,
-      image_urls,
-      is_featured,
-      is_active,
-    } = req.body;
-
-    if (image_urls !== undefined && !Array.isArray(image_urls)) {
-      return res.status(400).json({ success: false, message: 'image_urls must be an array of image URLs.' });
-    }
-    if (Array.isArray(image_urls) && image_urls.some((url) => typeof url !== 'string')) {
-      return res.status(400).json({ success: false, message: 'Each image URL must be a string.' });
-    }
-    if (Array.isArray(image_urls) && image_urls.length > 10) {
-      return res.status(400).json({ success: false, message: 'A product can have up to 10 images.' });
-    }
+    const { category_id, name, description, price, discount_price, stock_quantity, unit, is_featured, is_active } = req.body;
 
     const pool = getPool();
+    const [existing] = await pool.query('SELECT image_url, image_urls FROM products WHERE id = ?', [id]);
+    if (!existing.length) return res.status(404).json({ success: false, message: 'Product not found.' });
+
+    const hasNewImages = (Array.isArray(req.files) && req.files.length) || req.file || req.body.image_urls || req.body.image_url;
+    const existingUrls = parseImageUrls(existing[0].image_urls, existing[0].image_url);
+    const imageUrls = hasNewImages ? await resolveImageUrls(req, existingUrls) : existingUrls;
+    const primaryImageUrl = imageUrls[0] || null;
 
     const shouldUpdateDiscount = discount_price !== undefined;
-    const parsedDiscount = shouldUpdateDiscount && discount_price !== null && discount_price !== ''
-      ? parseFloat(discount_price)
-      : null;
-    const shouldUpdateImages = image_urls !== undefined || image_url !== undefined;
-    const normalizedImageUrls = image_urls !== undefined
-      ? parseImageUrls(image_urls)
-      : parseImageUrls(image_url ? [image_url] : []);
-    const primaryImageUrl = normalizedImageUrls[0] || null;
+    const parsedDiscount = shouldUpdateDiscount && discount_price !== null && discount_price !== '' ? parseFloat(discount_price) : null;
 
     await pool.query(`
-      UPDATE products 
-      SET 
-        category_id = COALESCE(?, category_id),
-        name = COALESCE(?, name),
-        description = COALESCE(?, description),
-        price = COALESCE(?, price),
+      UPDATE products SET
+        category_id    = COALESCE(?, category_id),
+        name           = COALESCE(?, name),
+        description    = COALESCE(?, description),
+        price          = COALESCE(?, price),
         discount_price = CASE WHEN ? THEN ? ELSE discount_price END,
         stock_quantity = COALESCE(?, stock_quantity),
-        unit = COALESCE(?, unit),
-        image_url = CASE WHEN ? THEN ? ELSE image_url END,
-        image_urls = CASE WHEN ? THEN ? ELSE image_urls END,
-        is_featured = COALESCE(?, is_featured),
-        is_active = COALESCE(?, is_active)
+        unit           = COALESCE(?, unit),
+        image_url      = ?,
+        image_urls     = ?,
+        is_featured    = COALESCE(?, is_featured),
+        is_active      = COALESCE(?, is_active)
       WHERE id = ?
     `, [
       category_id || null,
       name ? name.trim() : null,
       description !== undefined ? description : null,
       price !== undefined ? parseFloat(price) : null,
-      shouldUpdateDiscount,
-      parsedDiscount,
+      shouldUpdateDiscount, parsedDiscount,
       stock_quantity !== undefined ? parseInt(stock_quantity, 10) : null,
       unit || null,
-      shouldUpdateImages,
       primaryImageUrl,
-      shouldUpdateImages,
-      JSON.stringify(normalizedImageUrls),
+      JSON.stringify(imageUrls),
       is_featured !== undefined ? (is_featured ? 1 : 0) : null,
       is_active !== undefined ? (is_active ? 1 : 0) : null,
       id,
     ]);
 
     const [updated] = await pool.query(`
-      SELECT p.*, c.name AS category_name 
-      FROM products p 
-      LEFT JOIN categories c ON c.id = p.category_id 
+      SELECT p.*, c.name AS category_name
+      FROM products p LEFT JOIN categories c ON c.id = p.category_id
       WHERE p.id = ?
     `, [id]);
 
-    if (updated.length === 0) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
-    }
-
-    return res.json({
-      success: true,
-      message: 'Product updated successfully.',
-      product: withProductImages(updated[0]),
-    });
+    return res.json({ success: true, message: 'Product updated successfully.', product: withProductImages(updated[0]) });
   } catch (err) {
     console.error('[Product update error]', err);
-    return res.status(500).json({ success: false, message: 'Failed to update product.' });
+    const status = err.status || 500;
+    const message = status === 503 ? err.message : 'Failed to update product.';
+    return res.status(status).json({ success: false, message });
   }
 }
 
 async function deleteProduct(req, res) {
   try {
-    const { id } = req.params;
-    const pool = getPool();
-
-    const [result] = await pool.query('DELETE FROM products WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
-    }
-
-    return res.json({
-      success: true,
-      message: 'Product deleted successfully.',
-    });
+    const [result] = await getPool().query('DELETE FROM products WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Product not found.' });
+    return res.json({ success: true, message: 'Product deleted successfully.' });
   } catch (err) {
     console.error('[Product delete error]', err);
     return res.status(500).json({ success: false, message: 'Failed to delete product.' });
   }
 }
 
-module.exports = {
-  getAllProducts,
-  getFeaturedProducts,
-  getProductById,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-};
+module.exports = { getAllProducts, getFeaturedProducts, getProductById, createProduct, updateProduct, deleteProduct };
